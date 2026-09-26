@@ -189,6 +189,21 @@ the audit database. See the [official Codex hooks documentation](https://learn.c
 for hook trust, matching, and decision semantics. MayI does not install or trust
 this hook automatically.
 
+Example requests sent through `mayi hook codex` to a running daemon with Julia
+unconfigured produced these results. The command strings were evaluated for
+permission, not executed:
+
+| Command | Decision | Source | Logged latency | Hook response |
+| --- | --- | --- | --- | --- |
+| `git status` | `approve` | `static_allow` | 6.84 ms | `allow` |
+| `sudo -n true` | `deny` | `static_deny` | 1.48 ms | `deny` |
+| `printf mayi-test` | `hold` | `fallback` | 1.85 ms | `{}` — native approval flow |
+
+All three logged `confidence=None` because no model prediction was used.
+Latencies are observations from this run, not performance guarantees. The
+startup warning `julia_not_configured ambiguous_requests_will_hold` explains
+the fallback: static rules still work, while requests needing Julia hold.
+
 ## Requests and policy
 
 Send one JSON object per line over the Unix socket. `input` and `metadata`
