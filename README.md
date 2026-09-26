@@ -204,6 +204,22 @@ Latencies are observations from this run, not performance guarantees. The
 startup warning `julia_not_configured ambiguous_requests_will_hold` explains
 the fallback: static rules still work, while requests needing Julia hold.
 
+The same examples were then verified through actual Codex permission requests
+in a live macOS desktop session, with Julia still unconfigured. The hook was
+installed in the user's inline Codex configuration and trusted while the session
+was running; no restart was needed in this test.
+
+| Command requested by Codex | MayI decision | Observed workflow result |
+| --- | --- | --- |
+| `git status` | `approve` (`static_allow`) | Executed successfully and reported a clean working tree. |
+| `sudo -n true` | `deny` (`static_deny`) | Codex rejected execution with `Blocked by MayI policy`; the command was not executed or retried. |
+| `printf mayi-test` | `hold` (`fallback`) | Continued through normal Codex approval, then printed `mayi-test`. |
+
+Audit records matched each command and the live Codex session and turn IDs,
+confirming that Codex invoked the hook. These requests explicitly asked to run
+outside the sandbox so they reached the permission flow. This verifies static
+approval, static denial, and HOLD fallthrough through Codex.
+
 ## Requests and policy
 
 Send one JSON object per line over the Unix socket. `input` and `metadata`
@@ -377,8 +393,9 @@ establish that an operation is safe.
 The default installation and container omit Julia's runtime and checkpoint.
 Their absence leaves deterministic policy available and returns HOLD for the
 remaining requests. Check `julia_available` in status before expecting model
-inference. Checkpoint-backed inference and the native Codex approval UI have not
-yet been verified in a real coding session.
+inference. The native Codex permission workflow has been verified in a live
+session for static APPROVE, static DENY, and HOLD fallthrough, as described in
+[Codex permission hook](#codex-permission-hook).
 
 Human outcomes from native approval prompts are not captured automatically.
 History is for auditing and evaluation; MayI does not learn authorization policy
