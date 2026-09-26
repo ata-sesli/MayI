@@ -1,0 +1,21 @@
+[julia]
+# Install SupersonicLabs/Julia-1's Python package and download its checkpoint.
+# model = "/absolute/path/to/Julia-1"
+device = "cpu"
+approval_threshold = 0.98
+
+[server]
+unix_socket = "~/.mayi/mayi.sock"
+request_timeout = 10.0
+
+[http]
+enabled = false
+host = "127.0.0.1"
+port = 7411
+# Prefer MAYI_BEARER_TOKEN over storing a token here.
+# ssl_cert = "/absolute/path/to/cert.pem"
+# ssl_key = "/absolute/path/to/key.pem"
+
+[storage]
+path = "~/.local/share/mayi/mayi.zova"
+retain_input = false

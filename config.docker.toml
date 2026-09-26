@@ -1,0 +1,17 @@
+[julia]
+device = "cpu"
+approval_threshold = 0.98
+
+[server]
+unix_socket = "/data/mayi.sock"
+request_timeout = 10.0
+
+[http]
+enabled = true
+host = "0.0.0.0"
+port = 7411
+# Supply MAYI_BEARER_TOKEN when starting the container.
+
+[storage]
+path = "/data/mayi.zova"
+retain_input = false

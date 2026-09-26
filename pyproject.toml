@@ -1,0 +1,17 @@
+[project]
+name = "mayi"
+version = "0.1.0"
+description = "A local-first authorization layer for coding agents"
+readme = "README.md"
+authors = [
+    { name = "wipesides", email = "atasesli@protonmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = ["granian>=2.8.3,<3", "zova>=1.1,<2"]
+
+[project.scripts]
+mayi = "mayi.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.9,<0.13.0"]
+build-backend = "uv_build"
