@@ -24,6 +24,7 @@ without a concrete requirement.
 | `src/mayi/julia/prompt.py` | Authorization question and operational state encoding. |
 | `src/mayi/server/` | JSON protocol, Unix socket server/client, raw ASGI application. |
 | `src/mayi/adapters/codex.py` | Hook normalization and output translation. |
+| `src/mayi/hook_client.py` | Ordered Unix/HTTP fallback and bounded HTTP worker. |
 | `src/mayi/storage/zova.py` | Zova audit records and log queries. |
 | `src/mayi/config.py` | TOML loading and configuration validation. |
 | `src/mayi/cli.py`, `__main__.py` | CLI commands and daemon lifecycle. |
@@ -37,8 +38,11 @@ without a concrete requirement.
 
 - All transports must call the same evaluator. Never duplicate decision logic
   in an HTTP handler or coding-agent adapter.
-- Preserve the order: normalize, hard deny, known-safe allow, Julia, threshold.
-  Julia must never override a hard deny.
+- Preserve the order: normalize, deny-rule matching, known-safe allow, Julia,
+  threshold. `strict` returns DENY for deny-rule matches; `approve-or-hold`
+  returns HOLD immediately. Julia must never override either result. Policy
+  belongs to the daemon, defaults to strict, and is recorded with the matched
+  rule in responses and audit records.
 - Missing/invalid model output, timeouts, and evaluation failures must not
   produce implicit approval. Use HOLD for uncertainty.
 - Audit-write failure prevents approval but preserves an existing hard deny.
@@ -52,6 +56,10 @@ without a concrete requirement.
   an already running model call.
 - Codex APPROVE maps to `allow`, DENY maps to `deny`, and HOLD/errors emit `{}`
   for native approval fallthrough. The hook must not load Julia or open Zova.
+- Hook endpoints are sequential availability fallback. Stop on every valid
+  decision, including HOLD/DENY. Authentication, TLS, or malformed-response
+  failures must not advance to another server. Keep total deadlines bounded,
+  HTTPS verification enabled, and bearer tokens out of redirects and logs.
 - Require bearer authentication for non-loopback HTTP. Keep request limits,
   private socket permissions, and conservative handling of malformed input.
 - Do not log arbitrary request bodies or secrets. Full tool-input retention is

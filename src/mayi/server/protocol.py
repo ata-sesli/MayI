@@ -29,6 +29,7 @@ def status(evaluator):
         "status": "ready",
         "julia_available": evaluator.model is not None,
         "approval_threshold": evaluator.threshold,
+        "policy": evaluator.policy_name,
     }
 
 

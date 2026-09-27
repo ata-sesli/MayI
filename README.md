@@ -220,7 +220,109 @@ confirming that Codex invoked the hook. These requests explicitly asked to run
 outside the sandbox so they reached the permission flow. This verifies static
 approval, static denial, and HOLD fallthrough through Codex.
 
+### Ordered server fallback
+
+Configure endpoints in the order the hook should try them. For example, use a
+local daemon first and a remote daemon over private Tailscale HTTPS second:
+
+```toml
+[hook]
+timeout = 25.0          # Total deadline across all endpoints
+connect_timeout = 2.0   # HTTP connection/TLS setup timeout
+
+[[hook.endpoints]]
+unix_socket = "~/.mayi/mayi.sock"
+timeout = 12.0          # Complete attempt, including the response
+
+[[hook.endpoints]]
+url = "https://server.YOUR-TAILNET.ts.net/v1/decide"
+token_file = "~/.config/mayi/remote.token"
+timeout = 12.0
+```
+
+Save this as `~/.config/mayi/hook.toml` and point the Codex hook command at it:
+
+```sh
+/absolute/path/to/mayi/.venv/bin/mayi --config /absolute/path/to/.config/mayi/hook.toml hook codex
+```
+
+Set Codex's hook timeout to 30 seconds for this example. Remove any shell guard
+that requires the local socket to exist: the hook must run to try the remote server when
+the local daemon is unavailable. Review and trust the changed hook definition.
+It connects to existing services and never starts a daemon or loads Julia.
+
+The first valid `approve`, `deny`, or `hold` ends the search. Later endpoints
+are not contacted. Missing/refused connections, network failures, timeouts, and
+HTTP 404/502/503/504 try the next endpoint. If none responds before the total
+deadline, the hook emits `{}` for normal Codex approval. Authentication errors,
+certificate failures, redirects, other HTTP errors, and malformed responses also
+emit `{}`, but stop the search rather than trying another server.
+
+Without `hook.endpoints`, the existing `server.unix_socket` behavior is
+unchanged. Defaults for an endpoint list are a 12-second total deadline,
+1-second HTTP connection timeout, and 5 seconds per endpoint. Choose timeouts
+that accommodate your model's inference time. A timed-out server may finish
+evaluating and auditing a request after fallback; MayI never executes commands.
+
+Remote URLs require HTTPS with certificate verification. Plain HTTP is allowed
+only for literal loopback IPs. Redirects and environment HTTP proxies are not
+used. `token_file` contains the remote server's bearer token, is read only when
+that endpoint is attempted, and must be a regular file owned by your user with
+no group/other permissions (for example, `chmod 600`). Symlinks are rejected.
+Keep the token outside the repository and transfer it over SSH. No token is
+needed for Unix sockets.
+
+### Remote server with Portless and Tailscale
+
+Connect both machines to your tailnet and enable Tailscale HTTPS/Serve. Install
+Portless with Node.js 24 or newer on the server. Publish the MayI container's HTTP
+port only on the server's loopback interface (`127.0.0.1:7411:7411`), supply a
+persistent `MAYI_BEARER_TOKEN`, and retain the audit volume as described in
+[Container deployment](#container-deployment).
+
+For an existing container named `mayi`, Portless can manage its attached process
+and private Tailscale endpoint:
+
+```sh
+PORTLESS_PORT=8080 PORTLESS_HTTPS=0 PORTLESS_SYNC_HOSTS=0 \
+  portless mayi --app-port 7411 --tailscale podman start --attach mayi
+```
+
+The example uses port 8080 for Portless's local HTTP proxy; choose an available
+port on your server. MayI's default HTTP port is 7411. The local proxy binds to
+loopback; the Tailscale endpoint is HTTPS
+and the connection between machines also uses WireGuard encryption. Use the exact
+tailnet URL Portless prints, adding `/v1/decide` in the hook config. Portless may
+choose another HTTPS port when one is already assigned. Tailscale Serve must
+permit your server user to manage its configuration. Use `--tailscale` for
+private tailnet access; `--funnel` would publish the service to the internet.
+See [Portless Tailscale sharing](https://github.com/vercel-labs/portless#tailscale-sharing).
+
 ## Requests and policy
+
+Select a built-in policy in the **daemon's** configuration, then restart it:
+
+```toml
+[policy]
+mode = "approve-or-hold"
+```
+
+| Policy | Known-safe request | Deny-rule match | Uncertain request or error |
+| --- | --- | --- | --- |
+| `strict` (default) | APPROVE | DENY | HOLD |
+| `approve-or-hold` | APPROVE | HOLD | HOLD |
+
+Both modes use the same Julia approval threshold for requests that reach the
+model. In `approve-or-hold`, a deny-rule match returns HOLD immediately with
+source `static_hold`; Julia cannot approve it. Codex then uses its normal
+approval flow. Responses and audit records include `policy` and `matched_rule`,
+preserving the rule's reason when a deny is converted to HOLD. Status reports
+the active policy. Existing audit records remain readable.
+
+Policy is controlled by each daemon, not by the request or hook. Configure both
+servers consistently when using fallback; a valid HOLD still stops fallback.
+The Python `Evaluator` accepts `policy_name="approve-or-hold"`; the convenience
+`authorize()` function retains the default `strict` policy.
 
 Send one JSON object per line over the Unix socket. `input` and `metadata`
 default to empty objects; `operation`, `cwd`, and `reason` are optional:
@@ -235,8 +337,10 @@ Response:
 {"decision":"approve","source":"static_allow","confidence":null,"reason":"Known development command"}
 ```
 
-The order is hard deny → narrow known-safe rules → Julia → confidence threshold.
-Julia cannot override a hard deny and only selects `approve` or `hold`.
+The order is deny-rule matching → narrow known-safe rules → Julia → confidence
+threshold. A deny-rule match ends evaluation with DENY or HOLD according to the
+selected policy. Julia cannot override that result and only selects `approve`
+or `hold`.
 The centralized question lives in `src/mayi/julia/prompt.py`.
 
 Hard-deny patterns cover root deletion, sudo, force pushes, remote scripts piped
@@ -410,6 +514,7 @@ and human labels.
 | `src/mayi/julia/` | Julia runtime wrapper and centralized authorization question. |
 | `src/mayi/server/` | Shared protocol, Unix server/client, raw ASGI application. |
 | `src/mayi/adapters/` | Codex permission-hook translation. |
+| `src/mayi/hook_client.py` | Ordered endpoint fallback and bounded HTTP requests. |
 | `src/mayi/storage/` | Zova audit persistence and queries. |
 | `src/mayi/cli.py`, `config.py` | CLI lifecycle and TOML configuration. |
 | `src/mayi/evaluation.py` | Permission-fixture metrics. |

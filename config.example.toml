@@ -1,3 +1,7 @@
+[policy]
+# strict: approve/hold/deny; approve-or-hold: human review instead of denial.
+mode = "strict"
+
 [julia]
 # Install SupersonicLabs/Julia-1's Python package and download its checkpoint.
 # model = "/absolute/path/to/Julia-1"
@@ -19,3 +23,19 @@ port = 7411
 [storage]
 path = "~/.local/share/mayi/mayi.zova"
 retain_input = false
+
+# Optional ordered hook endpoints. Without this section, the hook uses
+# server.unix_socket. Stop at the first valid decision, including HOLD/DENY.
+# [hook]
+# timeout = 25.0
+# connect_timeout = 2.0
+#
+# [[hook.endpoints]]
+# unix_socket = "~/.mayi/mayi.sock"
+# timeout = 12.0
+#
+# [[hook.endpoints]]
+# url = "https://server.YOUR-TAILNET.ts.net/v1/decide"
+# token_file = "~/.config/mayi/remote.token"
+# timeout = 12.0
+# Set the outer Codex hook timeout to 30 seconds for these settings.

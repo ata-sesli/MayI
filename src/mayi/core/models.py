@@ -44,6 +44,8 @@ class AuthorizationResult:
     source: str
     confidence: float | None = None
     reason: str | None = None
+    policy: str = "strict"
+    matched_rule: str | None = None
 
     def to_dict(self):
         return asdict(self)

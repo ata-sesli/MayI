@@ -70,6 +70,7 @@ async def build_evaluator(config):
         threshold=config.approval_threshold,
         timeout=config.request_timeout,
         audit=audit,
+        policy_name=config.policy_mode,
     )
 
 
@@ -133,7 +134,13 @@ async def execute(args, config):
     if args.command == "hook":
         try:
             result = await run_hook(
-                read_request(), config.unix_socket, timeout=config.request_timeout + 2
+                read_request(),
+                config.unix_socket,
+                timeout=config.hook_timeout
+                if config.hook_endpoints
+                else config.request_timeout + 2,
+                endpoints=config.hook_endpoints,
+                connect_timeout=config.hook_connect_timeout,
             )
         except ValueError, UnicodeError, RecursionError, OSError:
             result = {}

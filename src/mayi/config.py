@@ -4,12 +4,67 @@ import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 DEFAULT_PATH = Path("~/.config/mayi/config.toml")
 
 
+@dataclass(frozen=True, slots=True)
+class HookEndpoint:
+    unix_socket: Path | None = None
+    url: str | None = None
+    token_file: Path | None = None
+    timeout: float = 5.0
+
+
+def hook_endpoint(value):
+    if not isinstance(value, dict) or set(value) - {
+        "unix_socket",
+        "url",
+        "token_file",
+        "timeout",
+    }:
+        raise ValueError("Invalid hook endpoint")
+    if ("unix_socket" in value) == ("url" in value):
+        raise ValueError("Hook endpoint requires exactly one transport")
+    result = dict(value)
+    for key in ("unix_socket", "url", "token_file"):
+        if key in result:
+            if not isinstance(result[key], str) or not result[key].strip():
+                raise ValueError("Invalid hook endpoint value")
+            if key != "url":
+                result[key] = Path(result[key]).expanduser()
+    timeout = result.get("timeout", 5.0)
+    if type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("Invalid hook endpoint timeout")
+    if "unix_socket" in result and "token_file" in result:
+        raise ValueError("Unix endpoints do not use tokens")
+    if "url" in result:
+        url = result["url"]
+        parsed = urlsplit(url)
+        if (
+            any(ord(c) <= 32 or ord(c) == 127 for c in url)
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("Invalid hook endpoint URL")
+        if parsed.port is not None and not 1 <= parsed.port <= 65535:
+            raise ValueError("Invalid hook endpoint port")
+        try:
+            loopback = ipaddress.ip_address(parsed.hostname).is_loopback
+        except ValueError:
+            loopback = False
+        if parsed.scheme != "https" and not (parsed.scheme == "http" and loopback):
+            raise ValueError("Remote hook endpoints require HTTPS")
+    return HookEndpoint(**result)
+
+
 @dataclass(slots=True)
 class Config:
+    policy_mode: str = "strict"
     model: str | None = None
     device: str = "cpu"
     approval_threshold: float = 0.98
@@ -23,6 +78,9 @@ class Config:
     ssl_key: Path | None = None
     storage_path: Path = Path("~/.local/share/mayi/mayi.zova")
     retain_input: bool = False
+    hook_endpoints: tuple[HookEndpoint, ...] = ()
+    hook_timeout: float = 12.0
+    hook_connect_timeout: float = 1.0
 
 
 def load_config(path=None):
@@ -37,6 +95,7 @@ def load_config(path=None):
         raw = {}
     config = Config()
     fields = {
+        "policy": {"mode": "policy_mode"},
         "julia": {
             "model": "model",
             "device": "device",
@@ -52,6 +111,11 @@ def load_config(path=None):
             "ssl_key": "ssl_key",
         },
         "storage": {"path": "storage_path", "retain_input": "retain_input"},
+        "hook": {
+            "endpoints": "hook_endpoints",
+            "timeout": "hook_timeout",
+            "connect_timeout": "hook_connect_timeout",
+        },
     }
     for section, values in raw.items():
         if section not in fields or not isinstance(values, dict):
@@ -62,15 +126,30 @@ def load_config(path=None):
             setattr(config, fields[section][key], value)
     if "MAYI_BEARER_TOKEN" in os.environ:
         config.bearer_token = os.environ["MAYI_BEARER_TOKEN"]
+    if config.policy_mode not in ("strict", "approve-or-hold"):
+        raise ValueError("Unknown authorization policy")
     for key in ("http_enabled", "retain_input"):
         if type(getattr(config, key)) is not bool:
             raise ValueError(f"{key} must be boolean")
-    for key in ("approval_threshold", "request_timeout"):
+    for key in (
+        "approval_threshold",
+        "request_timeout",
+        "hook_timeout",
+        "hook_connect_timeout",
+    ):
         value = getattr(config, key)
         if type(value) not in (int, float) or not math.isfinite(value):
             raise ValueError(f"Invalid {key}")
     if not 0 <= config.approval_threshold <= 1 or config.request_timeout <= 0:
         raise ValueError("Invalid threshold or request timeout")
+    if config.hook_timeout <= 0 or config.hook_connect_timeout <= 0:
+        raise ValueError("Invalid hook timeout")
+    if "hook" in raw and "endpoints" in raw["hook"]:
+        if not isinstance(config.hook_endpoints, list) or not config.hook_endpoints:
+            raise ValueError("Hook endpoints must be a nonempty array")
+        config.hook_endpoints = tuple(
+            hook_endpoint(value) for value in config.hook_endpoints
+        )
     if type(config.port) is not int or not 1 <= config.port <= 65535:
         raise ValueError("Invalid HTTP port")
     for key in ("model", "device", "host", "bearer_token"):

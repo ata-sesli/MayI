@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "A local-first authorization layer for coding agents"
 readme = "README.md"
 authors = [
-    { name = "wipesides", email = "atasesli@protonmail.com" }
+    { name = "ata-sesli", email = "atasesli@protonmail.com" }
 ]
 requires-python = ">=3.14"
 dependencies = ["granian>=2.8.3,<3", "zova>=1.1,<2"]

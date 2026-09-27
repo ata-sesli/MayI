@@ -43,11 +43,22 @@ def translate(result):
     }
 
 
-async def run_hook(event, path, *, timeout=12.0):
+async def run_hook(event, path, *, timeout=12.0, endpoints=(), connect_timeout=1.0):
     from dataclasses import asdict
 
     try:
         request = normalize(event)
+        if endpoints:
+            from ..hook_client import query_endpoints
+
+            return translate(
+                await query_endpoints(
+                    endpoints,
+                    asdict(request),
+                    timeout=timeout,
+                    connect_timeout=connect_timeout,
+                )
+            )
         return translate(await query(path, asdict(request), timeout=timeout))
     except Exception:  # noqa: BLE001 - every hook failure must fall through.
         return {}
