@@ -40,6 +40,17 @@ def parser():
     logs = commands.add_parser("logs", help="Read audit records")
     logs.add_argument("--decision", choices=["approve", "hold", "deny"])
     logs.add_argument("--limit", type=int, default=100)
+    logs.add_argument(
+        "--events",
+        action="store_true",
+        help="Read telemetry events instead of decisions",
+    )
+    feedback = commands.add_parser(
+        "feedback",
+        help="Explicitly record a human decision; never changes authorization",
+    )
+    feedback.add_argument("--request-id", required=True)
+    feedback.add_argument("--decision", required=True, choices=["approve", "deny"])
     return root
 
 
@@ -71,6 +82,8 @@ async def build_evaluator(config):
         timeout=config.request_timeout,
         audit=audit,
         policy_name=config.policy_mode,
+        model_id=config.model,
+        device=config.device,
     )
 
 
@@ -141,9 +154,35 @@ async def execute(args, config):
                 else config.request_timeout + 2,
                 endpoints=config.hook_endpoints,
                 connect_timeout=config.hook_connect_timeout,
+                state_file=config.hook_state_file,
+                telemetry_file=config.hook_telemetry_file,
             )
         except ValueError, UnicodeError, RecursionError, OSError:
             result = {}
+        print(json.dumps(result))
+    elif args.command == "feedback":
+        value = {
+            "action": "event",
+            "event": {
+                "kind": "human_feedback",
+                "request_id": args.request_id,
+                "human_decision": args.decision,
+            },
+        }
+        if config.hook_endpoints:
+            from .hook_client import query_endpoints
+
+            result = await query_endpoints(
+                config.hook_endpoints,
+                value,
+                timeout=config.hook_timeout,
+                connect_timeout=config.hook_connect_timeout,
+                state_file=config.hook_state_file,
+            )
+        else:
+            result = await query(config.unix_socket, value)
+        if result.get("stored") is not True:
+            raise RuntimeError("Feedback was not stored")
         print(json.dumps(result))
     elif args.command == "serve":
         await serve(config)
@@ -155,7 +194,13 @@ async def execute(args, config):
 
         store = AuditStore(config.storage_path)
         try:
-            print(json.dumps(store.logs(decision=args.decision, limit=args.limit)))
+            print(
+                json.dumps(
+                    store.events(limit=args.limit)
+                    if args.events
+                    else store.logs(decision=args.decision, limit=args.limit)
+                )
+            )
         finally:
             store.close()
     elif args.command == "decide":

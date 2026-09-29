@@ -35,14 +35,19 @@ class Application:
                 await self._reply(send, 401, hold("Authentication required").to_dict())
                 return
         path, method = scope["path"], scope["method"]
-        routes = {"/v1/health": "GET", "/v1/status": "GET", "/v1/decide": "POST"}
+        routes = {
+            "/v1/health": "GET",
+            "/v1/status": "GET",
+            "/v1/decide": "POST",
+            "/v1/events": "POST",
+        }
         if path not in routes:
             await self._reply(send, 404, {"error": "Not found"})
             return
         if method != routes[path]:
             await self._reply(send, 405, {"error": "Method not allowed"})
             return
-        if path != "/v1/decide":
+        if path not in {"/v1/decide", "/v1/events"}:
             await self._reply(send, 200, status(self.evaluator))
             return
         try:
@@ -67,8 +72,17 @@ class Application:
         except TimeoutError:
             await self._reply(send, 408, hold("Request timeout").to_dict())
             return
-        result = await self.evaluator.authorize(value)
-        await self._reply(send, 200, result.to_dict())
+        if path == "/v1/events":
+            result = self.evaluator.record_event(value)
+            await self._reply(send, 200 if result["stored"] else 400, result)
+        elif isinstance(value, dict) and value.get("action") == "event":
+            # The envelope also works over configured hook endpoints/Unix sockets.
+            await self._reply(
+                send, 200, self.evaluator.record_event(value.get("event"))
+            )
+        else:
+            result = await self.evaluator.authorize(value)
+            await self._reply(send, 200, result.to_dict())
 
     @staticmethod
     async def _reply(send, code, value):

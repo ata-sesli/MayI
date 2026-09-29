@@ -30,6 +30,8 @@ def status(evaluator):
         "julia_available": evaluator.model is not None,
         "approval_threshold": evaluator.threshold,
         "policy": evaluator.policy_name,
+        "context": evaluator.context,
+        "telemetry": evaluator.health(),
     }
 
 
@@ -40,4 +42,6 @@ async def dispatch(evaluator, data):
         return hold("Malformed JSON").to_dict()
     if value == {"action": "status"}:
         return status(evaluator)
+    if isinstance(value, dict) and value.get("action") == "event":
+        return evaluator.record_event(value.get("event"))
     return (await evaluator.authorize(value)).to_dict()

@@ -25,7 +25,8 @@ without a concrete requirement.
 | `src/mayi/server/` | JSON protocol, Unix socket server/client, raw ASGI application. |
 | `src/mayi/adapters/codex.py` | Hook normalization and output translation. |
 | `src/mayi/hook_client.py` | Ordered Unix/HTTP fallback and bounded HTTP worker. |
-| `src/mayi/storage/zova.py` | Zova audit records and log queries. |
+| `src/mayi/storage/zova.py` | Zova decision/event records and log queries. |
+| `src/mayi/telemetry.py` | Context fingerprints, event validation, bounded routing logs. |
 | `src/mayi/config.py` | TOML loading and configuration validation. |
 | `src/mayi/cli.py`, `__main__.py` | CLI commands and daemon lifecycle. |
 | `src/mayi/evaluation.py` | Fixture evaluation and aggregate metrics. |
@@ -60,11 +61,21 @@ without a concrete requirement.
   decision, including HOLD/DENY. Authentication, TLS, or malformed-response
   failures must not advance to another server. Keep total deadlines bounded,
   HTTPS verification enabled, and bearer tokens out of redirects and logs.
+  Remember the last successful endpoint across hook processes; retry it first,
+  then advance cyclically only on unavailability. Cached routing preference
+  must never change a decision or introduce endpoints outside configuration.
 - Require bearer authentication for non-loopback HTTP. Keep request limits,
   private socket permissions, and conservative handling of malformed input.
 - Do not log arbitrary request bodies or secrets. Full tool-input retention is
   opt-in. Audit operations and metadata may still contain sensitive data.
 - Audit history must not automatically influence future authorization decisions.
+- Keep telemetry separate from authorization: event persistence cannot grant
+  permission, and completion-metric failures cannot undo an audited decision.
+  Decision-audit failures must still prevent approval. Never infer human approval
+  from tool execution or correlate repeated commands by guessed timing.
+- Outcome hooks keep only invocation IDs and structured exit/duration values;
+  omit raw inputs/outputs. Missing fields stay unknown. Routing logs are opt-in,
+  owner-only, bounded, and best effort. Health counters reset per daemon process.
 
 ## Local setup and use
 

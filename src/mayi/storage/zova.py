@@ -33,6 +33,9 @@ class AuditStore:
                 "id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, "
                 "decision TEXT NOT NULL, record TEXT NOT NULL)"
             )
+            self.db.exec(
+                "CREATE TABLE IF NOT EXISTS mayi_events (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, kind TEXT NOT NULL, record TEXT NOT NULL)"
+            )
         finally:
             os.umask(old_mask)
 
@@ -81,6 +84,41 @@ class AuditStore:
         with self.db.prepare(sql) as stmt:
             if decision is not None:
                 stmt.bind_text(1, decision)
+            rows = []
+            while stmt.step() == self.zova.Step.ROW:
+                rows.append(json.loads(stmt.column_text(0)))
+            return rows
+
+    def has_request(self, request_id):
+        with self.db.prepare("SELECT id FROM mayi_audit WHERE id = ?1") as stmt:
+            stmt.bind_text(1, request_id)
+            return stmt.step() == self.zova.Step.ROW
+
+    def record_event(self, event):
+        event = {
+            **event,
+            "timestamp": event.get("timestamp", datetime.now(UTC).isoformat()),
+        }
+        with self.db.prepare("INSERT INTO mayi_events VALUES (?1, ?2, ?3, ?4)") as stmt:
+            for index, value in enumerate(
+                (
+                    event["id"],
+                    event["timestamp"],
+                    event["kind"],
+                    json.dumps(event, allow_nan=False),
+                ),
+                1,
+            ):
+                stmt.bind_text(index, value)
+            stmt.step()
+
+    def events(self, *, limit=100):
+        if not 1 <= limit <= 10000:
+            raise ValueError("Log limit must be between 1 and 10000")
+        with self.db.prepare(
+            "SELECT record FROM mayi_events ORDER BY timestamp DESC, id DESC LIMIT "
+            + str(int(limit))
+        ) as stmt:
             rows = []
             while stmt.step() == self.zova.Step.ROW:
                 rows.append(json.loads(stmt.column_text(0)))

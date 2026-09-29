@@ -1,3 +1,4 @@
+import hashlib
 import ipaddress
 import math
 import os
@@ -81,6 +82,8 @@ class Config:
     hook_endpoints: tuple[HookEndpoint, ...] = ()
     hook_timeout: float = 12.0
     hook_connect_timeout: float = 1.0
+    hook_telemetry_file: Path | None = None
+    hook_state_file: Path = Path("~/.local/state/mayi/hook.json")
 
 
 def load_config(path=None):
@@ -94,6 +97,11 @@ def load_config(path=None):
             raise
         raw = {}
     config = Config()
+    config.hook_state_file = Path("~/.local/state/mayi") / (
+        "hook-"
+        + hashlib.sha256(str(path.resolve()).encode()).hexdigest()[:16]
+        + ".json"
+    )
     fields = {
         "policy": {"mode": "policy_mode"},
         "julia": {
@@ -115,6 +123,8 @@ def load_config(path=None):
             "endpoints": "hook_endpoints",
             "timeout": "hook_timeout",
             "connect_timeout": "hook_connect_timeout",
+            "state_file": "hook_state_file",
+            "telemetry_file": "hook_telemetry_file",
         },
     }
     for section, values in raw.items():
@@ -158,9 +168,16 @@ def load_config(path=None):
             continue
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"Invalid {key}")
-    for key in ("unix_socket", "storage_path", "ssl_cert", "ssl_key"):
+    for key in (
+        "unix_socket",
+        "storage_path",
+        "ssl_cert",
+        "ssl_key",
+        "hook_state_file",
+        "hook_telemetry_file",
+    ):
         value = getattr(config, key)
-        if value is None and key in {"ssl_cert", "ssl_key"}:
+        if value is None and key in {"ssl_cert", "ssl_key", "hook_telemetry_file"}:
             continue
         if not isinstance(value, (str, Path)) or not str(value):
             raise ValueError(f"Invalid {key}")

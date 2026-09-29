@@ -73,7 +73,7 @@ class FallbackTests(unittest.IsolatedAsyncioTestCase):
 
     def config(self, endpoints, timeout=2):
         path = self.root / "config.toml"
-        text = f"[hook]\ntimeout={timeout}\nconnect_timeout=0.2\n"
+        text = f"[hook]\ntimeout={timeout}\nconnect_timeout=0.2\nstate_file={json.dumps(str(self.root / 'state.json'))}\n"
         for endpoint in endpoints:
             text += "\n[[hook.endpoints]]\n"
             for key, value in endpoint.items():
@@ -306,3 +306,80 @@ class FallbackTests(unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(endpoint=endpoint), self.assertRaises(ValueError):
                 self.config([endpoint])
+
+    async def test_remembers_success_across_hook_processes_and_switches_when_unavailable(
+        self,
+    ):
+        first = await self.endpoint(status=404)
+        second = await self.endpoint(decision="hold")
+        third = await self.endpoint(decision="deny")
+        self.config([{"url": first}, {"url": second}, {"url": third}])
+        state = self.root / "state.json"
+        path = self.root / "config.toml"
+
+        async def invoke():
+            process = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-m",
+                "mayi",
+                "--config",
+                str(path),
+                "hook",
+                "codex",
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            out, err = await process.communicate(json.dumps(EVENT).encode())
+            self.assertEqual(process.returncode, 0, err)
+            return json.loads(out)
+
+        self.assertEqual(await invoke(), {})
+        self.assertEqual([call[0] for call in self.calls], [404, 200])
+        self.calls.clear()
+        self.assertEqual(await invoke(), {})
+        self.assertEqual([call[0] for call in self.calls], [200])
+        self.assertEqual(state.stat().st_mode & 0o777, 0o600)
+        # Preferred endpoint disappears; the next configured endpoint is tried.
+        self.servers[1].close()
+        await self.servers[1].wait_closed()
+        self.calls.clear()
+        result = await invoke()
+        self.assertEqual(result["hookSpecificOutput"]["decision"]["behavior"], "deny")
+        self.assertEqual([call[0] for call in self.calls], [200])
+        self.calls.clear()
+        await invoke()
+        self.assertEqual([call[0] for call in self.calls], [200])
+        # Changing the configured list invalidates the saved preference.
+        self.config([{"url": first}, {"url": third}])
+        self.calls.clear()
+        await invoke()
+        self.assertEqual([call[0] for call in self.calls], [404, 200])
+        state.write_text("corrupt state")
+        self.calls.clear()
+        await invoke()
+        self.assertEqual([call[0] for call in self.calls], [404, 200])
+
+    async def test_outcomes_send_once_and_do_not_move_preferred_endpoint(self):
+        first = await self.endpoint(raw=b'{"stored":true,"event_id":"event"}')
+        second = await self.endpoint()
+        config = self.config([{"url": first}, {"url": second}])
+        event = {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Bash",
+            "session_id": "s",
+            "tool_use_id": "t",
+            "tool_response": {"exit_code": 0},
+            "tool_input": {"command": "secret"},
+        }
+        result = await run_hook(
+            event,
+            config.unix_socket,
+            endpoints=config.hook_endpoints,
+            state_file=config.hook_state_file,
+        )
+        self.assertEqual(result, {})
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(self.calls[0][2]["event"]["exit_code"], 0)
+        self.assertNotIn("secret", json.dumps(self.calls[0][2]))
+        self.assertFalse(config.hook_state_file.exists())

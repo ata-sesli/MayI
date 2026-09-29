@@ -22,6 +22,7 @@ initial conservative setting, not a calibrated safety guarantee.
 - [HTTP and HTTPS](#http-and-https)
 - [Container deployment](#container-deployment)
 - [Audit history](#audit-history)
+- [Telemetry](#telemetry)
 - [Development and evaluation](#development-and-evaluation)
 - [Current boundaries](#current-boundaries)
 - [Project structure](#project-structure)
@@ -222,7 +223,13 @@ approval, static denial, and HOLD fallthrough through Codex.
 
 ### Ordered server fallback
 
-Configure endpoints in the order the hook should try them. For example, use a
+The hook remembers the last endpoint that returned a valid decision and tries
+it first on subsequent invocations. APPROVE, HOLD, and DENY all count as a
+successful response. If that endpoint is unavailable, the hook tries the next
+configured endpoint, wrapping to the start of the list if needed. It remembers
+the next successful endpoint and does not probe earlier servers for recovery.
+
+Configure endpoints in their initial fallback order. For example, use a
 local daemon first and a remote daemon over private Tailscale HTTPS second:
 
 ```toml
@@ -251,12 +258,24 @@ that requires the local socket to exist: the hook must run to try the remote ser
 the local daemon is unavailable. Review and trust the changed hook definition.
 It connects to existing services and never starts a daemon or loads Julia.
 
-The first valid `approve`, `deny`, or `hold` ends the search. Later endpoints
+The first valid `approve`, `deny`, or `hold` ends the search. Other endpoints
 are not contacted. Missing/refused connections, network failures, timeouts, and
 HTTP 404/502/503/504 try the next endpoint. If none responds before the total
 deadline, the hook emits `{}` for normal Codex approval. Authentication errors,
 certificate failures, redirects, other HTTP errors, and malformed responses also
 emit `{}`, but stop the search rather than trying another server.
+
+The saved preference is private local state under `~/.local/state/mayi/`, with
+a separate file for each configuration path. It contains endpoint fingerprints
+and an index, not tokens or request contents. Optionally set `hook.state_file`
+to choose a different path. Changing endpoint addresses, token-file paths, or
+their order resets the preference. Missing or corrupt state falls back to the configured order. If a preference
+cannot be saved, the decision still returns normally; the next invocation uses
+any previously saved preference or the configured order.
+Concurrent hooks update the file atomically; the last completed write wins.
+
+For a remote-only setup, configure only HTTPS endpoints. The Mac needs the
+short-lived hook client, but no local MayI daemon. The hook never starts one.
 
 Without `hook.endpoints`, the existing `server.unix_socket` behavior is
 unchanged. Defaults for an endpoint list are a 12-second total deadline,
@@ -383,7 +402,8 @@ port = 7411
 # ssl_key = "/path/to/key.pem"
 ```
 
-Granian serves `POST /v1/decide`, `GET /v1/health`, and `GET /v1/status`.
+Granian serves `POST /v1/decide`, `POST /v1/events`, `GET /v1/health`, and
+`GET /v1/status`.
 The decision endpoint accepts the same request object and returns the same
 result as the Unix socket. Health indicates process availability; status also
 reports `julia_available` and `approval_threshold`.
@@ -396,7 +416,7 @@ curl http://127.0.0.1:7411/v1/decide \
 
 Non-loopback binds require a bearer token. Set `MAYI_BEARER_TOKEN` before
 starting the daemon and send `Authorization: Bearer <token>`. When configured,
-authentication applies to all three endpoints, including on loopback. Use TLS
+authentication applies to all endpoints, including on loopback. Use TLS
 certificates or an HTTPS reverse proxy when crossing a network. Both certificate
 and private-key paths must be supplied together. The service intentionally uses
 Granian's single-process embedded server so both transports share one model;
@@ -487,6 +507,108 @@ uv build
 Build artifacts go to `dist/`. See [AGENTS.md](AGENTS.md) for the development
 workflow and the invariants that changes must preserve.
 
+## Telemetry
+
+Decision responses and Zova records include a `request_id`, `context`, and
+`timings`. The hook generates the request ID before routing, so its local log
+can be joined to the daemon's decision even after failover.
+
+| Area | Available data | Where to read it |
+| --- | --- | --- |
+| Routing | Ordered attempts, selected endpoint index, unavailable/timeout/error outcomes, HTTP connection time when available, total hook time. | Optional private hook JSONL file. |
+| Decision timing | Policy time, Julia evaluation time (including queue wait), audit-write time, total evaluation time through the decision audit. | Decision response and `decision_completed` Zova event. |
+| Decision context | Policy, rule-source fingerprint, settings fingerprint, MayI version, configured model identifier hash, device, threshold. | Decision record and status. |
+| Service health | Uptime, evaluated requests, active requests, decision counts, model timeouts/failures, audit failures, event failures. | `mayi status` or authenticated `GET /v1/status`. |
+| Tool outcomes | Codex session/turn/tool-use IDs, tool name, structured exit code and duration when available. | `tool_outcome` Zova events. |
+| Human responses | Explicit approval/rejection attached to a request ID; automatic capture is unavailable. | `human_feedback` Zova events. |
+
+Counters reset with the daemon. Zova events persist with the audit database,
+including across container replacement when its volume is retained. The
+settings fingerprint covers authorization settings, not tokens or network
+configuration. The model identifier hashes the configured model string; it is
+not a checksum of checkpoint contents. Missing observations remain `null` or
+absent rather than becoming success, zero duration, or human approval.
+
+The decision record is written before audit timing is known. Its `audit_ms`
+and `total_ms` are therefore null; a separate `decision_completed` event stores
+the finished timings and final decision. That event write is best effort and
+excluded from `total_ms`. Decision-audit failure still prevents automatic
+approval. Completion-event failure increments `event_failures` without changing
+an already audited decision.
+
+Read records on the daemon host, using its storage configuration:
+
+```sh
+mayi logs --limit 20
+mayi logs --events --limit 50
+```
+
+For a container, use `podman exec mayi mayi --config /app/config.toml logs
+--events --limit 50`. Events do not expire automatically; retain the database
+according to your own audit-history needs.
+
+To enable routing logs, add this key to the existing `[hook]` section of your
+local hook configuration:
+
+```toml
+[hook]
+telemetry_file = "~/.local/state/mayi/hook.telemetry.jsonl"
+```
+
+Routing logs use zero-based indexes into the configured endpoint list and do
+not contain endpoint addresses, credentials, commands, or tool output. The
+file is owner-only and cleared when another entry would exceed 1 MiB. Concurrent
+writes use a nonblocking lock; busy/unwritable logs can drop entries without
+affecting permissions. Routing logging is disabled when the key is omitted.
+
+To collect tool outcomes, add this **additional** inline hook to Codex's
+`~/.codex/config.toml`, substituting your installed executable and hook-config
+paths. Preserve the existing synchronous `PermissionRequest` hook:
+
+```toml
+[[hooks.PostToolUse]]
+matcher = ".*"
+
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = '"/absolute/path/to/mayi/.venv/bin/mayi" --config "/absolute/path/to/hook.toml" hook codex'
+async = true
+timeout = 30
+```
+
+Review/trust the new definition in Codex. It uses the existing endpoint list
+and last-successful preference, sends to one reachable server, and always
+returns `{}`. Outcome delivery does not change the saved authorization endpoint.
+Deploy the updated daemon first: older daemons cannot store these events.
+Delivery is best effort, with no offline replay queue; network failures or Codex
+session shutdown can lose outcome events.
+
+[Codex's documented `PostToolUse` event](https://learn.chatgpt.com/docs/hooks#posttooluse)
+identifies a tool invocation and carries tool-specific output. MayI retains
+only integer `exit_code` and finite nonnegative `wall_time_seconds` from a
+structured response, converting seconds to milliseconds. Textual and other
+response formats leave these values unknown; raw output and inputs are never
+stored in outcome events. Hosted tools outside Codex's hook coverage do not
+produce these events. A tool outcome is not evidence of a human approval.
+
+Match outcomes using `session_id` and `tool_use_id` when both the permission
+record and outcome expose them. Permission hooks may lack `tool_use_id`; in
+that case no exact decision-to-outcome association is claimed. Repeated commands
+are never matched by command text or timing guesses.
+
+Codex does not expose a documented hook for the user's answer to its approval
+prompt. Record an explicitly observed answer yourself with:
+
+```sh
+mayi --config /absolute/path/to/hook.toml feedback --request-id REQUEST_UUID --decision approve
+```
+
+Use `deny` for a rejection. The selected daemon must contain the referenced
+request; if it lives on another server, use a hook config targeting that server.
+Feedback is stored separately with `source="explicit_feedback"`. It never
+rewrites the original decision or changes future authorization policy. An
+authenticated client can also submit a validated event to `POST /v1/events`.
+
 ## Current boundaries
 
 MayI is an approval aid for trusted coding environments, not an OS sandbox.
@@ -515,7 +637,8 @@ and human labels.
 | `src/mayi/server/` | Shared protocol, Unix server/client, raw ASGI application. |
 | `src/mayi/adapters/` | Codex permission-hook translation. |
 | `src/mayi/hook_client.py` | Ordered endpoint fallback and bounded HTTP requests. |
-| `src/mayi/storage/` | Zova audit persistence and queries. |
+| `src/mayi/storage/` | Zova audit and event persistence and queries. |
+| `src/mayi/telemetry.py` | Context fingerprints, event validation, private routing logs. |
 | `src/mayi/cli.py`, `config.py` | CLI lifecycle and TOML configuration. |
 | `src/mayi/evaluation.py` | Permission-fixture metrics. |
 | `tests/` | Unit/integration tests and permission fixtures. |
@@ -525,4 +648,4 @@ Contributor and agent instructions are in [AGENTS.md](AGENTS.md).
 
 ## License
 
-This repository does not currently include a license file.
+MayI is available under the [MIT License](LICENSE).

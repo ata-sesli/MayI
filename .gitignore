@@ -29,3 +29,6 @@ Julia-1/
 
 # Local tooling caches
 .ruff_cache/
+
+# Local hook telemetry
+*.telemetry.jsonl

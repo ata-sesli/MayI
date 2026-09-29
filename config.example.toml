@@ -29,6 +29,11 @@ retain_input = false
 # [hook]
 # timeout = 25.0
 # connect_timeout = 2.0
+# Optional override; otherwise a private state file is chosen per config path.
+# state_file = "~/.local/state/mayi/hook.json"
+# Optional private routing log, capped at 1 MiB; no commands or credentials.
+# telemetry_file = "~/.local/state/mayi/hook.telemetry.jsonl"
+# The last endpoint to return a valid decision is tried first next time.
 #
 # [[hook.endpoints]]
 # unix_socket = "~/.mayi/mayi.sock"

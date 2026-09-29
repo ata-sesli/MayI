@@ -2,17 +2,21 @@
 
 import asyncio
 import errno
+import hashlib
 import http.client
 import os
 import ssl
 import stat
 import sys
+import tempfile
+import time
 from dataclasses import asdict
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from .server.protocol import MAX_BYTES, decode, encode
 from .server.unix import query
+from .telemetry import milliseconds
 
 
 class Unavailable(Exception):
@@ -57,13 +61,16 @@ def http_worker():
             url.hostname, url.port, timeout=task["connect_timeout"]
         )
         try:
+            started = time.monotonic()
             connection.connect()
+            connect_ms = milliseconds(started)
             connection.sock.settimeout(endpoint["timeout"])
             connection.request(
                 "POST", url.path or "/", body=encode(task["request"]), headers=headers
             )
             response = connection.getresponse()
             if response.status in {404, 502, 503, 504}:
+                sys.stdout.buffer.write(encode({"reason": f"http_{response.status}"}))
                 return 2
             # No redirects, environment proxies, or credential forwarding.
             if response.status != 200:
@@ -72,12 +79,9 @@ def http_worker():
             if len(body) > MAX_BYTES:
                 return 1
             result = decode(body)
-            if not isinstance(result, dict) or result.get("decision") not in {
-                "approve",
-                "hold",
-                "deny",
-            }:
+            if not valid_reply(task["request"], result):
                 return 1
+            result["_connect_ms"] = connect_ms
             sys.stdout.buffer.write(encode(result))
             return 0
         finally:
@@ -117,7 +121,10 @@ async def http_query(endpoint, request, connect_timeout):
         )
         stdout, _ = await process.communicate(data)
         if process.returncode == 2:
-            raise Unavailable
+            reason = (
+                decode(stdout).get("reason") if stdout else "connection_unavailable"
+            )
+            raise Unavailable(reason)
         if process.returncode != 0:
             raise ValueError("HTTP endpoint failed")
         return decode(stdout)
@@ -130,9 +137,83 @@ async def http_query(endpoint, request, connect_timeout):
         await process.wait()
 
 
-async def query_endpoints(endpoints, request, *, timeout, connect_timeout):
+def endpoint_fingerprint(endpoints):
+    values = [(str(e.unix_socket), e.url, str(e.token_file)) for e in endpoints]
+    return hashlib.sha256(encode(values)).hexdigest()
+
+
+def preferred_index(path, fingerprint, count):
+    if path is None:
+        return 0
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as source:
+            info = os.fstat(source.fileno())
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_uid != os.getuid()
+                or info.st_mode & 0o077
+            ):
+                return 0
+            value = decode(source.read(4097))
+        index = value.get("index")
+        if (
+            value.get("endpoints") == fingerprint
+            and type(index) is int
+            and 0 <= index < count
+        ):
+            return index
+    except OSError, ValueError, TypeError, AttributeError, RecursionError:
+        pass
+    return 0
+
+
+def remember_endpoint(path, fingerprint, index):
+    if path is None:
+        return
+    temporary = None
+    try:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        info = path.parent.stat()
+        if info.st_uid != os.getuid() or info.st_mode & 0o022:
+            return
+        with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as output:
+            temporary = Path(output.name)
+            output.write(encode({"endpoints": fingerprint, "index": index}))
+        os.replace(temporary, path)
+    except OSError:
+        # This is routing preference, not authorization/audit persistence.
+        pass
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def valid_reply(request, result):
+    if not isinstance(result, dict):
+        return False
+    if request.get("action") == "event":
+        return type(result.get("stored")) is bool
+    return result.get("decision") in {"approve", "hold", "deny"}
+
+
+async def query_endpoints(
+    endpoints, request, *, timeout, connect_timeout, state_file=None, routing=None
+):
+    fingerprint = endpoint_fingerprint(endpoints)
+    start = preferred_index(state_file, fingerprint, len(endpoints))
     async with asyncio.timeout(timeout):
-        for endpoint in endpoints:
+        for offset in range(len(endpoints)):
+            index = (start + offset) % len(endpoints)
+            endpoint = endpoints[index]
+            attempt = {"endpoint": index, "outcome": "cancelled", "connect_ms": None}
+            started = time.monotonic()
+            if routing is not None:
+                routing["attempts"].append(attempt)
             try:
                 async with asyncio.timeout(endpoint.timeout):
                     if endpoint.unix_socket is not None:
@@ -147,20 +228,33 @@ async def query_endpoints(endpoints, request, *, timeout, connect_timeout):
                                 errno.ECONNRESET,
                                 errno.EPIPE,
                             }:
-                                raise Unavailable from error
+                                raise Unavailable("unix_unavailable") from error
                             raise
                     else:
                         result = await http_query(endpoint, request, connect_timeout)
-                    if not isinstance(result, dict) or result.get("decision") not in {
-                        "approve",
-                        "hold",
-                        "deny",
-                    }:
-                        raise ValueError("Invalid endpoint decision")
+                    if not valid_reply(request, result):
+                        raise ValueError("Invalid endpoint response")
+                    attempt["connect_ms"] = result.pop("_connect_ms", None)
+                    attempt["outcome"] = "reply"
+                    if routing is not None:
+                        routing["selected_endpoint"] = index
+                    # Only authorization replies update routing preference.
+                    if request.get("action") != "event":
+                        remember_endpoint(state_file, fingerprint, index)
                     return result
-            except Unavailable, TimeoutError:
-                continue
-    return {"decision": "hold"}
+            except Unavailable as error:
+                attempt["outcome"] = "unavailable"
+                attempt["reason"] = str(error)
+            except TimeoutError:
+                attempt["outcome"] = "timeout"
+            except Exception:
+                attempt["outcome"] = "error"
+                raise
+            finally:
+                attempt["duration_ms"] = milliseconds(started)
+    return (
+        {"stored": False} if request.get("action") == "event" else {"decision": "hold"}
+    )
 
 
 if __name__ == "__main__":

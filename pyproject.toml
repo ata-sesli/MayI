@@ -3,6 +3,8 @@ name = "mayi"
 version = "0.1.0"
 description = "A local-first authorization layer for coding agents"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "ata-sesli", email = "atasesli@protonmail.com" }
 ]

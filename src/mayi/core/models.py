@@ -47,6 +47,10 @@ class AuthorizationResult:
     policy: str = "strict"
     matched_rule: str | None = None
 
+    request_id: str | None = None
+    context: dict = field(default_factory=dict)
+    timings: dict = field(default_factory=dict)
+
     def to_dict(self):
         return asdict(self)
 
