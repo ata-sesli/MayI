@@ -22,12 +22,14 @@ class Evaluator:
         timeout=10.0,
         audit=None,
         policy_name="strict",
+        policy_rules=None,
         model_id=None,
         device=None,
     ):
         if policy_name not in ("strict", "approve-or-hold"):
             raise ValueError("Unknown authorization policy")
         self.policy_name = policy_name
+        self.policy_rules = policy_rules or policy.PolicyRules()
         if (
             type(threshold) not in (int, float)
             or not math.isfinite(threshold)
@@ -44,7 +46,14 @@ class Evaluator:
         self.threshold = threshold
         self.timeout = timeout
         self.audit = audit
-        self.context = context(policy_name, threshold, timeout, model_id, device)
+        self.context = context(
+            policy_name,
+            threshold,
+            timeout,
+            model_id,
+            device,
+            self.policy_rules.fingerprint,
+        )
         self.started = time.monotonic()
         self.counters = dict.fromkeys(
             (
@@ -110,7 +119,9 @@ class Evaluator:
             if candidate is not None:
                 request_id = str(uuid.UUID(candidate))
             stage = time.monotonic()
-            result = policy.hard_deny(request) or policy.known_safe(request)
+            result = policy.hard_deny(request, self.policy_rules) or policy.known_safe(
+                request, self.policy_rules
+            )
             timings["policy_ms"] = milliseconds(stage)
             if result is not None and result.decision == Decision.DENY:
                 result.matched_rule = result.reason

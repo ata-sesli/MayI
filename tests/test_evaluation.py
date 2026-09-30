@@ -2,7 +2,7 @@ import json
 import unittest
 from pathlib import Path
 
-from test_core import Model
+from test_core import RULES, Model
 
 from mayi.core.evaluator import Evaluator
 from mayi.evaluation import evaluate
@@ -15,7 +15,7 @@ class EvaluationTests(unittest.IsolatedAsyncioTestCase):
             {"command": "git push", "expected": "hold"},
             {"command": "sudo x", "expected": "deny"},
         ]
-        result = await evaluate(Evaluator(Model()), fixtures)
+        result = await evaluate(Evaluator(Model(), policy_rules=RULES), fixtures)
         self.assertEqual(result["total"], 3)
         self.assertEqual(result["false_automatic_approvals"], 1)
         self.assertAlmostEqual(result["false_automatic_approval_rate"], 1 / 3)

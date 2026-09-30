@@ -3,7 +3,7 @@
 MayI is a local-first authorization layer for coding agents.
 
 It evaluates proposed operations and returns `approve`, `hold`, or `deny`.
-Deterministic rules handle known cases; Julia-1 evaluates the rest. A daemon
+Optional file-based rules handle known cases; Julia-1 evaluates the rest. A daemon
 shares one authorization engine across a Unix socket and optional HTTP/HTTPS,
 with Zova keeping an audit trail. MayI evaluates operations but never executes
 them.
@@ -31,8 +31,9 @@ initial conservative setting, not a calibrated safety guarantee.
 ## Install and try
 
 Requires Python 3.14 and a Unix platform (macOS or Linux). Run these commands
-from the source checkout with `uv` installed. Julia is optional for trying the
-deterministic policy; its runtime and weights are installed separately below.
+from the source checkout with `uv` installed. The container installs Julia's
+runtime and downloads its checkpoint automatically on first startup. For a local
+environment, install the runtime as described below.
 
 ```sh
 uv sync --locked
@@ -41,13 +42,14 @@ uv run mayi decide --command "git push --force"
 uv run mayi decide --command "git commit -m change"
 ```
 
-Without Julia configured, these return `approve`, `deny`, and `hold`,
-respectively. Commands are evaluated as text; MayI never executes them.
+The shipped policy file has no rules. Without Julia configured, all three
+return `hold`. Commands are evaluated as text; MayI never executes them.
 `decide` evaluates locally, opens the audit store, and loads a configured model
 once for that invocation. Use the daemon for repeated low-latency requests.
 
 Copy [config.example.toml](config.example.toml) to
-`~/.config/mayi/config.toml`, or pass a path before the subcommand:
+`~/.config/mayi/config.toml` and [policy.toml](policy.toml) beside it, or pass
+a path before the subcommand:
 
 ```sh
 uv run mayi --config ./config.example.toml serve
@@ -79,8 +81,9 @@ flowchart LR
     Engine --> Result["APPROVE / HOLD / DENY"]
 ```
 
-The engine checks hard-deny rules first, then a narrow set of known-safe
-operations. Remaining requests go to Julia. An approval needs Julia's
+The engine checks configured deny rules first, then configured exact-command
+allow rules. Both lists are empty by default. Remaining requests go to Julia.
+An approval needs Julia's
 `approve` choice and a probability at or above the configured threshold.
 
 | Outcome | Meaning |
@@ -134,6 +137,20 @@ device = "cpu"
 approval_threshold = 0.98
 ```
 
+To download automatically instead, set the pinned model identifier:
+
+```toml
+[julia]
+model = "hf://SupersonicLabs/Julia-1@a85b127321d580d65176c89ced8273f305745d85"
+device = "cpu"
+approval_threshold = 0.98
+```
+
+The runtime must still be installed in local environments. Model downloads use
+the `models` directory beside the configured audit database. The container
+already includes the runtime and uses `/data/models`. Cached checkpoints are
+reused across starts; retain the data volume when replacing containers.
+
 Julia owns its ML dependencies. MayI's lockfile covers MayI, Granian, and Zova;
 the separately installed Julia runtime and checkpoint are managed separately.
 After installing Julia, use `.venv/bin/mayi serve` (or `uv run --no-sync mayi
@@ -143,9 +160,9 @@ runtime. Keep checkpoint files unchanged while the daemon runs.
 `serve` loads Julia once, with strict encoding, an 8,192-token limit and a
 512-token question budget. Inference runs off the event loop and is serialized,
 including after a requesting client times out. The default evaluation timeout
-is 10 seconds; set `[server].request_timeout` for your hardware. Model load
-failure, invalid output, overflow, inference errors, and timeouts produce HOLD
-for requests that need Julia. Deterministic rules still apply.
+is 10 seconds; set `[server].request_timeout` for your hardware. A configured
+model must download and load successfully before the daemon becomes ready.
+Invalid output, overflow, inference errors, and timeouts produce HOLD.
 
 ## Codex permission hook
 
@@ -190,8 +207,9 @@ the audit database. See the [official Codex hooks documentation](https://learn.c
 for hook trust, matching, and decision semantics. MayI does not install or trust
 this hook automatically.
 
-Example requests sent through `mayi hook codex` to a running daemon with Julia
-unconfigured produced these results. The command strings were evaluated for
+Before the empty default policy was introduced, example requests sent through
+`mayi hook codex` with configured static rules and Julia unconfigured produced
+these results. The command strings were evaluated for
 permission, not executed:
 
 | Command | Decision | Source | Logged latency | Hook response |
@@ -203,7 +221,7 @@ permission, not executed:
 All three logged `confidence=None` because no model prediction was used.
 Latencies are observations from this run, not performance guarantees. The
 startup warning `julia_not_configured ambiguous_requests_will_hold` explains
-the fallback: static rules still work, while requests needing Julia hold.
+the fallback: configured static rules still work, while requests needing Julia hold.
 
 The same examples were then verified through actual Codex permission requests
 in a live macOS desktop session, with Julia still unconfigured. The hook was
@@ -220,6 +238,19 @@ Audit records matched each command and the live Codex session and turn IDs,
 confirming that Codex invoked the hook. These requests explicitly asked to run
 outside the sandbox so they reached the permission flow. This verifies static
 approval, static denial, and HOLD fallthrough through Codex.
+
+With the empty default policy and the pinned Julia checkpoint, the same request
+texts were evaluated through the deployed HTTP service on 2026-09-30:
+
+| Command | Decision | Source | Approval probability |
+| --- | --- | --- | --- |
+| `git status` | `hold` | `julia` | 0.5951 |
+| `sudo -n true` | `hold` | `julia` | 0.0019 |
+| `printf mayi-test` | `hold` | `julia` | 0.0614 |
+
+None met the `0.98` approval threshold. These are observations for those request
+contexts; they are not fixed command rules. Their audit records survived a
+service restart, and the checkpoint was reused with networking disabled.
 
 ### Ordered server fallback
 
@@ -319,12 +350,42 @@ See [Portless Tailscale sharing](https://github.com/vercel-labs/portless#tailsca
 
 ## Requests and policy
 
-Select a built-in policy in the **daemon's** configuration, then restart it:
+Rules live in a TOML file, not in application code. The shipped
+[policy.toml](policy.toml) contains no rules:
+
+```toml
+allow = []
+deny = []
+```
+
+Select the file and decision mode in the **daemon's** configuration, then
+restart it. Relative file paths resolve beside the configuration file.
 
 ```toml
 [policy]
 mode = "approve-or-hold"
+file = "policy.toml"
 ```
+
+For example, replace the empty lists with these rules if you want them:
+
+```toml
+[[allow]]
+id = "git-status"
+tool = "Bash"
+command = "git status"
+
+[[deny]]
+id = "privilege"
+pattern = '\bsudo\b'
+```
+
+Allow rules match the exact tool name and command. Shell operators, redirection,
+conflicting command fields, or extra tool settings prevent static approval.
+Deny patterns are Python regular expressions applied to operation, working
+directory and string tool inputs, including normalized shell words and paths.
+Rule IDs must be unique. Missing or invalid configured files stop startup;
+changes take effect after restarting the daemon. Omitting `file` means no rules.
 
 | Policy | Known-safe request | Deny-rule match | Uncertain request or error |
 | --- | --- | --- | --- |
@@ -353,7 +414,7 @@ default to empty objects; `operation`, `cwd`, and `reason` are optional:
 Response:
 
 ```json
-{"decision":"approve","source":"static_allow","confidence":null,"reason":"Known development command"}
+{"decision":"hold","source":"fallback","confidence":null,"reason":"Julia unavailable"}
 ```
 
 The order is deny-rule matching → narrow known-safe rules → Julia → confidence
@@ -362,17 +423,11 @@ selected policy. Julia cannot override that result and only selects `approve`
 or `hold`.
 The centralized question lives in `src/mayi/julia/prompt.py`.
 
-Hard-deny patterns cover root deletion, sudo, force pushes, remote scripts piped
-to a shell, SSH paths, and `/etc` paths. For simplicity, v0 denies `/etc` reads
-too. These are explicit patterns, not a complete shell parser: obfuscated
-commands, shell variables, aliases, and filesystem symlinks are not fully
-resolved. More complex operations go to Julia rather than being prefix-allowed.
-
-The small static allow list covers plain `cargo test`, `cargo check`, `pytest`,
-`ruff check`, `git status`, `git diff`, and `git log`, with a few explicit flags.
-It assumes a trusted development checkout and normal executables: build and
-test commands can run repository code. MayI is an approval aid, not an OS
-sandbox or a tamper-proof boundary against processes running as the same user.
+There are no built-in command allow or deny lists. With the empty file, every
+valid request goes to Julia, or returns HOLD if no model is configured. Custom
+patterns do not fully resolve shell variables, aliases or filesystem symlinks.
+Build and test commands can execute repository code; only add allow rules for
+operations and environments you trust.
 
 The Python core can also be used without a daemon:
 
@@ -385,11 +440,12 @@ result = asyncio.run(mayi.authorize(request))
 print(result.decision)
 ```
 
-This convenience API uses deterministic policy and otherwise returns HOLD.
-`mayi.Evaluator(model, threshold=0.98, audit=store)` adds a resident
+This convenience API has no rules or model and returns HOLD.
+`mayi.Evaluator(model, threshold=0.98, audit=store, policy_rules=rules)` adds a resident
 `mayi.julia.engine.JuliaEngine` and audit store. Transport handlers share that
 same evaluator. Library callers choose their own lifecycle; the CLI configures
-both model and storage.
+both model and storage. Load file rules with
+`from mayi.core.policy import PolicyRules` and `PolicyRules.load(path)`.
 
 ## HTTP and HTTPS
 
@@ -425,7 +481,7 @@ upstream currently labels that interface experimental.
 ## Container deployment
 
 Build with the repository's `.dockerfile`, then supply a bearer token and a
-named volume for persistent audit data:
+named volume for persistent audit data and model files:
 
 ```sh
 docker build -f .dockerfile -t localhost/mayi:local .
@@ -456,11 +512,21 @@ To override configuration, add
 `-v "$PWD/my-config.toml:/app/config.toml:ro"` to `docker run`. Keep the socket
 and audit paths under `/data`; host bind mounts at `/data` must be writable by
 UID 10001 and must not be writable by other users.
+On SELinux hosts, use `:ro,Z` for configuration and policy bind mounts so Podman
+labels the files for the container. The mounted configuration must be readable
+by UID 10001; keep bearer tokens in the environment or a separate private file.
 
-As with the default local installation, Julia's runtime and checkpoint are not
-bundled. Deterministic policy works immediately; other requests return HOLD.
-For Julia inference, install its package in `/app/.venv` in a derived image,
-mount the checkpoint read-only, and set `[julia].model` to its container path.
+The image installs Julia's runtime from a pinned upstream revision. First
+startup downloads the checkpoint (roughly 550 MiB of weights) into `/data/models`
+and loads it before opening the listeners. Subsequent starts reuse the cache.
+Initial startup needs access to Hugging Face and may take several minutes.
+The default policy is empty and uses `approve-or-hold` mode.
+
+Mount a custom policy with `-v "$PWD/policy.toml:/app/policy.toml:ro"`.
+Custom configuration must include `[policy].file` and `[julia].model` to enable
+these features. Check `julia_available` in authenticated `/v1/status` after
+startup. Download or model-load failure stops startup rather than advertising
+a model-free ready daemon.
 
 ## Audit history
 
@@ -616,10 +682,9 @@ Its shell patterns are intentionally small and do not fully resolve aliases,
 variables, obfuscation, or filesystem symlinks. Model confidence alone does not
 establish that an operation is safe.
 
-The default installation and container omit Julia's runtime and checkpoint.
-Their absence leaves deterministic policy available and returns HOLD for the
-remaining requests. Check `julia_available` in status before expecting model
-inference. The native Codex permission workflow has been verified in a live
+Local installations need Julia's runtime installed separately; the container
+installs it and downloads the pinned checkpoint on first startup. With no rules
+and no configured model, requests return HOLD. The native Codex permission workflow has been verified in a live
 session for static APPROVE, static DENY, and HOLD fallthrough, as described in
 [Codex permission hook](#codex-permission-hook).
 
@@ -643,6 +708,7 @@ and human labels.
 | `src/mayi/evaluation.py` | Permission-fixture metrics. |
 | `tests/` | Unit/integration tests and permission fixtures. |
 | `.dockerfile`, `config.docker.toml` | Container build and runtime defaults. |
+| `policy.toml` | Empty default rule file; add explicit allow/deny rules as needed. |
 
 Contributor and agent instructions are in [AGENTS.md](AGENTS.md).
 

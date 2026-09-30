@@ -1,10 +1,14 @@
 [policy]
 # strict: approve/hold/deny; approve-or-hold: human review instead of denial.
 mode = "strict"
+# Relative to this configuration file. Shipped with no allow/deny rules.
+file = "policy.toml"
 
 [julia]
 # Install SupersonicLabs/Julia-1's Python package and download its checkpoint.
 # model = "/absolute/path/to/Julia-1"
+# Or download this pinned checkpoint automatically beside the audit database:
+# model = "hf://SupersonicLabs/Julia-1@a85b127321d580d65176c89ced8273f305745d85"
 device = "cpu"
 approval_threshold = 0.98
 

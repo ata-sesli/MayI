@@ -4,6 +4,8 @@
 !uv.lock
 !README.md
 !config.docker.toml
+!policy.toml
+!LICENSE
 !src/
 !src/**
 **/__pycache__/

@@ -5,6 +5,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+from test_core import RULES
+
 from mayi.adapters.codex import run_hook
 from mayi.config import HookEndpoint
 from mayi.core.evaluator import Evaluator
@@ -17,7 +19,9 @@ class TelemetryTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "audit.zova"
             audit = AuditStore(path)
-            evaluator = Evaluator(audit=audit, policy_name="approve-or-hold")
+            evaluator = Evaluator(
+                audit=audit, policy_name="approve-or-hold", policy_rules=RULES
+            )
             result = await evaluator.authorize(
                 {"agent": "test", "tool": "shell", "operation": "git status"}
             )

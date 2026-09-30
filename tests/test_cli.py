@@ -17,6 +17,7 @@ class CliTests(unittest.IsolatedAsyncioTestCase):
         self.config.write_text(
             f'[server]\nunix_socket="{self.directory}/mayi.sock"\n'
             f'[storage]\npath="{self.directory}/audit.zova"\n'
+            f'[policy]\nfile="{Path(__file__).parent / "fixtures/configured_policy.toml"}"\n'
         )
 
     async def asyncTearDown(self):

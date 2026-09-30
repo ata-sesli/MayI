@@ -66,6 +66,8 @@ def hook_endpoint(value):
 @dataclass(slots=True)
 class Config:
     policy_mode: str = "strict"
+    policy_file: Path | None = None
+    policy_rules: object = None
     model: str | None = None
     device: str = "cpu"
     approval_threshold: float = 0.98
@@ -103,7 +105,7 @@ def load_config(path=None):
         + ".json"
     )
     fields = {
-        "policy": {"mode": "policy_mode"},
+        "policy": {"mode": "policy_mode", "file": "policy_file"},
         "julia": {
             "model": "model",
             "device": "device",
@@ -175,13 +177,24 @@ def load_config(path=None):
         "ssl_key",
         "hook_state_file",
         "hook_telemetry_file",
+        "policy_file",
     ):
         value = getattr(config, key)
-        if value is None and key in {"ssl_cert", "ssl_key", "hook_telemetry_file"}:
+        if value is None and key in {
+            "ssl_cert",
+            "ssl_key",
+            "hook_telemetry_file",
+            "policy_file",
+        }:
             continue
         if not isinstance(value, (str, Path)) or not str(value):
             raise ValueError(f"Invalid {key}")
         setattr(config, key, Path(value).expanduser())
+    if config.policy_file is not None and not config.policy_file.is_absolute():
+        config.policy_file = path.parent / config.policy_file
+    from .core.policy import PolicyRules
+
+    config.policy_rules = PolicyRules.load(config.policy_file)
     if bool(config.ssl_cert) != bool(config.ssl_key):
         raise ValueError("Both ssl_cert and ssl_key are required")
     try:

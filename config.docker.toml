@@ -1,6 +1,11 @@
 [julia]
+model = "hf://SupersonicLabs/Julia-1@a85b127321d580d65176c89ced8273f305745d85"
 device = "cpu"
 approval_threshold = 0.98
+
+[policy]
+mode = "approve-or-hold"
+file = "/app/policy.toml"
 
 [server]
 unix_socket = "/data/mayi.sock"

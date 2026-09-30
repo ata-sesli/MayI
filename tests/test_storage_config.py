@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from test_core import Model, request
+from test_core import RULES, Model, request
 
 from mayi import Decision
 from mayi.config import load_config
@@ -17,7 +17,7 @@ class StorageTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "audit.zova"
             store = AuditStore(path)
-            evaluator = Evaluator(Model(), audit=store)
+            evaluator = Evaluator(Model(), audit=store, policy_rules=RULES)
             for command in ("git status", "sudo x", "git commit -m 'quoted'"):
                 await evaluator.authorize(request(command))
             store.close()
@@ -40,7 +40,7 @@ class StorageTests(unittest.IsolatedAsyncioTestCase):
             def record(self, *args):
                 raise OSError("disk unavailable")
 
-        evaluator = Evaluator(Model(), audit=BrokenStore())
+        evaluator = Evaluator(Model(), audit=BrokenStore(), policy_rules=RULES)
         self.assertEqual(
             (await evaluator.authorize(request("git status"))).decision, Decision.HOLD
         )

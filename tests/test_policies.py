@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from test_core import Model, request
+from test_core import RULES, Model, request
 
 from mayi.config import load_config
 from mayi.core.evaluator import Evaluator
@@ -13,7 +13,7 @@ from mayi.storage.zova import AuditStore
 class PolicyTests(unittest.IsolatedAsyncioTestCase):
     async def test_approve_or_hold_never_denies_or_consults_model_for_deny_rules(self):
         model = Model()
-        evaluator = Evaluator(model, policy_name="approve-or-hold")
+        evaluator = Evaluator(model, policy_name="approve-or-hold", policy_rules=RULES)
         for command in (
             "sudo -n true",
             "rm -rf /",
@@ -32,7 +32,7 @@ class PolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status(evaluator)["policy"], "approve-or-hold")
 
     async def test_defaults_remain_strict_and_invalid_policy_rejected(self):
-        result = await Evaluator().authorize(request("sudo x"))
+        result = await Evaluator(policy_rules=RULES).authorize(request("sudo x"))
         self.assertEqual(result.decision, "deny")
         self.assertEqual(result.policy, "strict")
         with self.assertRaises(ValueError):
@@ -49,7 +49,7 @@ class PolicyTests(unittest.IsolatedAsyncioTestCase):
                 req = request("sudo x")
                 req.reason = "user supplied explanation"
                 result = await Evaluator(
-                    policy_name=config.policy_mode, audit=store
+                    policy_name=config.policy_mode, audit=store, policy_rules=RULES
                 ).authorize(req)
                 row = store.logs()[0]
                 self.assertEqual(row["policy"], "approve-or-hold")
@@ -68,7 +68,7 @@ class PolicyTests(unittest.IsolatedAsyncioTestCase):
                 raise OSError("unavailable")
 
         result = await Evaluator(
-            policy_name="approve-or-hold", audit=Broken()
+            policy_name="approve-or-hold", audit=Broken(), policy_rules=RULES
         ).authorize(request("sudo x"))
         self.assertEqual(result.decision, "hold")
         self.assertEqual(result.policy, "approve-or-hold")

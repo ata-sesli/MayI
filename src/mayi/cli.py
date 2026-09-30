@@ -66,22 +66,29 @@ async def build_evaluator(config):
 
     audit = AuditStore(config.storage_path, retain_input=config.retain_input)
     model = None
-    if config.model:
-        logger.info("julia_loading")
-        try:
-            model = await asyncio.to_thread(
-                JuliaEngine.load, config.model, device=config.device
+    try:
+        if config.model:
+            logger.info("julia_loading")
+            from .julia.download import resolve_model
+
+            model_path = await asyncio.to_thread(
+                resolve_model, config.model, config.storage_path.parent
             )
-        except Exception:  # noqa: BLE001 - ML runtime failures must leave HOLD available.
-            logger.warning("julia_unavailable ambiguous_requests_will_hold")
-    else:
-        logger.warning("julia_not_configured ambiguous_requests_will_hold")
+            model = await asyncio.to_thread(
+                JuliaEngine.load, model_path, device=config.device
+            )
+        else:
+            logger.warning("julia_not_configured ambiguous_requests_will_hold")
+    except BaseException:
+        audit.close()
+        raise
     return Evaluator(
         model,
         threshold=config.approval_threshold,
         timeout=config.request_timeout,
         audit=audit,
         policy_name=config.policy_mode,
+        policy_rules=config.policy_rules,
         model_id=config.model,
         device=config.device,
     )

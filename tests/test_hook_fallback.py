@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from test_core import RULES
+
 from mayi.adapters.codex import run_hook
 from mayi.config import load_config
 from mayi.core.evaluator import Evaluator
@@ -127,7 +129,7 @@ class FallbackTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_live_unix_decision_does_not_contact_http(self):
         path = self.root / "live.sock"
-        server = UnixServer(Evaluator(), path)
+        server = UnixServer(Evaluator(policy_rules=RULES), path)
         await server.start()
         try:
             url = await self.endpoint()

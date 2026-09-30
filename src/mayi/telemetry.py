@@ -17,7 +17,9 @@ def fingerprint(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()[:16]
 
 
-def context(policy, threshold, timeout, model_id=None, device=None):
+def context(
+    policy, threshold, timeout, model_id=None, device=None, rules_fingerprint=None
+):
     from .core import policy as rules
 
     values = {
@@ -29,6 +31,7 @@ def context(policy, threshold, timeout, model_id=None, device=None):
         "request_timeout": timeout,
         "model_id": fingerprint(model_id) if model_id else None,
         "device": device,
+        "rules_fingerprint": rules_fingerprint,
         "mayi_version": version("mayi"),
     }
     return {**values, "config_version": fingerprint(values)}

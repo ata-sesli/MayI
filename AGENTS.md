@@ -18,7 +18,7 @@ without a concrete requirement.
 | --- | --- |
 | `src/mayi/core/decision.py` | The three decision values. |
 | `src/mayi/core/models.py` | Request/result dataclasses and normalization. |
-| `src/mayi/core/policy.py` | Explicit hard-deny and narrow known-safe rules. |
+| `src/mayi/core/policy.py`, `policy.toml` | File rule validation/matching; empty default rules. |
 | `src/mayi/core/evaluator.py` | Shared authorization pipeline, timeout, audit, fallback. |
 | `src/mayi/julia/engine.py` | Public Julia runtime API, validated probabilities, serialized inference. |
 | `src/mayi/julia/prompt.py` | Authorization question and operational state encoding. |
@@ -44,6 +44,10 @@ without a concrete requirement.
   returns HOLD immediately. Julia must never override either result. Policy
   belongs to the daemon, defaults to strict, and is recorded with the matched
   rule in responses and audit records.
+- Keep command rules in the configured policy file. Ship `policy.toml` with
+  empty allow/deny arrays; never reintroduce built-in command lists. Invalid or
+  missing configured files must fail startup. Resolve relative policy paths
+  beside the daemon configuration and fingerprint the loaded file in telemetry.
 - Missing/invalid model output, timeouts, and evaluation failures must not
   produce implicit approval. Use HOLD for uncertainty.
 - Audit-write failure prevents approval but preserves an existing hard deny.
@@ -99,7 +103,7 @@ the subcommand. Local defaults use `~/.mayi/mayi.sock`, disable HTTP, and store
 audit history in `~/.local/share/mayi/mayi.zova`. Keep personal configuration in
 ignored files such as `config.local.toml` or `my-config.toml`.
 
-Without Julia, static policy remains usable and semantic requests return HOLD.
+Without Julia, configured file rules remain usable; the empty default returns HOLD.
 Use the installation procedure in README.md for `SupersonicLabs/Julia-1`
 (distribution `supersonic-julia`, import `julia`). Do not install the unrelated
 Julia-language bridge by mistake. Julia is not in MayI's lockfile; after adding
@@ -129,12 +133,16 @@ and audit database in `/data`. Preserve that named volume across replacements.
 Custom bind mounts must grant UID 10001 the required ownership/access; socket
 directories must not be writable by others. Mount custom configuration at
 `/app/config.toml:ro`. Never bake deployment tokens into the image.
+On SELinux hosts, add `Z` to configuration/policy bind mounts. Non-secret
+configuration must be readable by UID 10001; deployment token files stay private.
 
 All HTTP endpoints require the configured bearer token. Check `/v1/status`
-with `Authorization: Bearer <token>` and inspect `julia_available`; a ready
-daemon can still be running without Julia. The image omits the Julia runtime
-and checkpoint. Add the runtime in a derived image, mount weights read-only,
-and configure their container path when model inference is required.
+with `Authorization: Bearer <token>` and inspect `julia_available`. The image
+installs the Julia runtime from a pinned revision and automatically downloads
+its checkpoint into `/data/models` on first startup. Retain the data volume
+across replacements. A configured model must download/load before listeners
+open; failure stops startup. Local environments install the runtime separately.
+The image uses the empty `/app/policy.toml` file and approve-or-hold mode.
 
 Use HTTPS or an HTTPS reverse proxy for network access beyond loopback.
 Granian's embedded server keeps both transports in one process. Native TLS

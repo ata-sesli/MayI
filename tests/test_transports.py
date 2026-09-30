@@ -5,6 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from test_core import RULES
+
 from mayi.adapters.codex import normalize, run_hook, translate
 from mayi.core.evaluator import Evaluator
 from mayi.server.http import Application
@@ -16,7 +18,7 @@ class UnixTests(unittest.IsolatedAsyncioTestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="mayi-", dir="/tmp")
         self.path = Path(self.tmp.name) / "mayi.sock"
         self.server = UnixServer(
-            Evaluator(), self.path, idle_timeout=0.2, max_bytes=1024
+            Evaluator(policy_rules=RULES), self.path, idle_timeout=0.2, max_bytes=1024
         )
         await self.server.start()
 
@@ -130,7 +132,7 @@ async def http_call(
 
 class HttpTests(unittest.IsolatedAsyncioTestCase):
     async def test_same_policy_and_routes(self):
-        app = Application(Evaluator())
+        app = Application(Evaluator(policy_rules=RULES))
         for command, expected in (
             ("git status", "approve"),
             ("sudo x", "deny"),

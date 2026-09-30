@@ -1,10 +1,14 @@
 import asyncio
 import math
 import unittest
+from pathlib import Path
 
 from mayi import AuthorizationRequest, Decision, authorize
 from mayi.core.evaluator import Evaluator
+from mayi.core.policy import PolicyRules
 from mayi.julia.engine import Prediction
+
+RULES = PolicyRules.load(Path(__file__).parent / "fixtures/configured_policy.toml")
 
 
 def request(command="git commit -m change", **kwargs):
@@ -36,7 +40,7 @@ class Model:
 
 
 class CoreTests(unittest.IsolatedAsyncioTestCase):
-    async def test_public_api_and_safe_commands(self):
+    async def test_configured_safe_commands(self):
         for command in (
             "cargo test",
             "cargo test --workspace",
@@ -49,12 +53,15 @@ class CoreTests(unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(command=command):
                 self.assertEqual(
-                    (await authorize(request(command))).decision, Decision.APPROVE
+                    (
+                        await Evaluator(policy_rules=RULES).authorize(request(command))
+                    ).decision,
+                    Decision.APPROVE,
                 )
 
     async def test_hard_denies_precede_model(self):
         model = Model()
-        evaluator = Evaluator(model)
+        evaluator = Evaluator(model, policy_rules=RULES)
         for command in (
             "rm -rf /",
             "sudo cargo test",
@@ -86,7 +93,10 @@ class CoreTests(unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(command=command):
                 self.assertEqual(
-                    (await authorize(request(command))).decision, Decision.HOLD
+                    (
+                        await Evaluator(policy_rules=RULES).authorize(request(command))
+                    ).decision,
+                    Decision.HOLD,
                 )
 
     async def test_threshold_and_invalid_predictions(self):
@@ -132,7 +142,9 @@ class CoreTests(unittest.IsolatedAsyncioTestCase):
             {"path": "/etc/hosts", "content": "x"},
             {},
         )
-        self.assertEqual((await authorize(req)).decision, Decision.DENY)
+        self.assertEqual(
+            (await Evaluator(policy_rules=RULES).authorize(req)).decision, Decision.DENY
+        )
 
     async def test_bad_threshold_rejected(self):
         for threshold in (-1, 1.1, math.nan, True):
@@ -149,10 +161,16 @@ class CoreTests(unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(command=command):
                 self.assertEqual(
-                    (await authorize(request(command))).decision, Decision.DENY
+                    (
+                        await Evaluator(policy_rules=RULES).authorize(request(command))
+                    ).decision,
+                    Decision.DENY,
                 )
 
     async def test_codex_description_does_not_disable_static_allow(self):
         req = request("git status")
         req.input["description"] = "Inspect the working tree"
-        self.assertEqual((await authorize(req)).decision, Decision.APPROVE)
+        self.assertEqual(
+            (await Evaluator(policy_rules=RULES).authorize(req)).decision,
+            Decision.APPROVE,
+        )
