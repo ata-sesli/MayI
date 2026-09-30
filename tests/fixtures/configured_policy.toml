@@ -1,0 +1,65 @@
+# Test fixture only. The shipped policy.toml has no rules.
+[[allow]]
+id = "git-status"
+tool = "shell"
+command = "git status"
+
+[[allow]]
+id = "bash-git-status"
+tool = "Bash"
+command = "git status"
+
+[[allow]]
+id = "git-diff"
+tool = "shell"
+command = "git diff"
+
+[[allow]]
+id = "git-log"
+tool = "shell"
+command = "git log --oneline"
+
+[[allow]]
+id = "cargo-test"
+tool = "shell"
+command = "cargo test"
+
+[[allow]]
+id = "cargo-workspace"
+tool = "shell"
+command = "cargo test --workspace"
+
+[[allow]]
+id = "cargo-check"
+tool = "shell"
+command = "cargo check"
+
+[[allow]]
+id = "pytest"
+tool = "shell"
+command = "pytest"
+
+[[allow]]
+id = "ruff-check"
+tool = "shell"
+command = "ruff check ."
+
+[[deny]]
+id = "sudo"
+pattern = "(?i)\\bsudo\\b"
+
+[[deny]]
+id = "destructive"
+pattern = "(?i)\\brm\\s+-[a-z]*[rf]"
+
+[[deny]]
+id = "forced-push"
+pattern = "(?i)\\bgit\\s+push\\s+.*(?:--force|-\\w*f\\w*)"
+
+[[deny]]
+id = "pipe-shell"
+pattern = "(?i)(?:curl|wget)\\b.*\\|\\s*(?:sh|bash)\\b"
+
+[[deny]]
+id = "private-path"
+pattern = "(?i)(?:/etc/|/\\.ssh/)"
