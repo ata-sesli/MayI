@@ -18,6 +18,7 @@ The default 98% threshold is not a calibrated safety guarantee.
 - [Install](#install)
 - [Quick start](#quick-start)
 - [How decisions work](#how-decisions-work)
+- [Configure the agent client](#configure-the-agent-client)
 - [Connect Codex](#connect-codex)
 - [Connect Claude Code](#connect-claude-code)
 - [Connect OpenCode V2](#connect-opencode-v2)
@@ -126,6 +127,44 @@ hard deny. All transports use the same evaluator.
 
 The daemon loads the model once and serializes inference. The hook is a short
 client process: it connects to an existing daemon and never starts one.
+
+## Configure the agent client
+
+For the [container deployment](#container-deployment) on the same machine as
+your agent, install the CLI and create a client configuration pointing to its
+loopback HTTP endpoint. The client does not need the model runtime.
+
+In the shell where you set the container's `MAYI_BEARER_TOKEN`, save that same
+token in a private file:
+
+```sh
+mkdir -p ~/.config/mayi
+(umask 077; printf '%s\n' "$MAYI_BEARER_TOKEN" > ~/.config/mayi/server.token)
+chmod 600 ~/.config/mayi/server.token
+```
+
+Create `~/.config/mayi/hook.toml`:
+
+```toml
+[hook]
+timeout = 10.0
+connect_timeout = 2.0
+
+[[hook.endpoints]]
+url = "http://127.0.0.1:7411/v1/decide"
+token_file = "~/.config/mayi/server.token"
+```
+
+Use this file for both prompt capture and permission evaluation. In the Codex
+and Claude hook commands below, add
+`--config /absolute/path/to/hook.toml` before `hook`. For OpenCode, set
+`mayiConfig` to that file's absolute path. A 15-second outer hook timeout covers
+this 10-second client deadline.
+
+The daemon must already be running; client hooks do not start it. For a remote
+container, replace the URL with the server's verified HTTPS address and copy its
+token to the agent machine's private token file. See
+[multiple endpoints](#multiple-endpoints) for availability fallback.
 
 ## Connect Codex
 
