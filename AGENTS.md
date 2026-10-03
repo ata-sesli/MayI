@@ -43,7 +43,7 @@ without a concrete requirement.
 - Preserve the order: normalize, deny-rule matching, known-safe allow, Auto,
   threshold. `strict` returns DENY for deny-rule matches; `approve-or-hold`
   returns HOLD immediately. Auto must never override either result. Policy
-  belongs to the daemon, defaults to strict, and is recorded with the matched
+  belongs to the daemon, defaults to approve-or-hold, and is recorded with the matched
   rule in responses and audit records.
 - Keep command rules in the configured policy file. Ship `policy.toml` with
   empty allow/deny arrays; never reintroduce built-in command lists. Invalid or

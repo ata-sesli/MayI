@@ -4,7 +4,7 @@ from pathlib import Path
 
 from test_core import RULES, Model, request
 
-from mayi.config import load_config
+from mayi.config import Config, load_config
 from mayi.core.evaluator import Evaluator
 from mayi.server.protocol import status
 from mayi.storage.zova import AuditStore
@@ -31,8 +31,20 @@ class PolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await evaluator.authorize({})).decision, "hold")
         self.assertEqual(status(evaluator)["policy"], "approve-or-hold")
 
-    async def test_defaults_remain_strict_and_invalid_policy_rejected(self):
+    async def test_default_policy_holds_deny_rules(self):
         result = await Evaluator(policy_rules=RULES).authorize(request("sudo x"))
+        self.assertEqual(result.decision, "hold")
+        self.assertEqual(result.policy, "approve-or-hold")
+        self.assertEqual(Config().policy_mode, "approve-or-hold")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text("")
+            self.assertEqual(load_config(path).policy_mode, "approve-or-hold")
+
+    async def test_explicit_strict_and_invalid_policy_rejected(self):
+        result = await Evaluator(policy_name="strict", policy_rules=RULES).authorize(
+            request("sudo x")
+        )
         self.assertEqual(result.decision, "deny")
         self.assertEqual(result.policy, "strict")
         with self.assertRaises(ValueError):

@@ -339,8 +339,8 @@ inputs, including normalized shell words and paths. Rule IDs must be unique.
 
 | Policy | Allow match | Deny match | Unmatched request |
 | --- | --- | --- | --- |
-| `strict` — local default | APPROVE | DENY | Auto, or HOLD if unavailable. |
-| `approve-or-hold` — container default | APPROVE | HOLD | Auto, or HOLD if unavailable. |
+| `strict` — opt-in | APPROVE | DENY | Auto, or HOLD if unavailable. |
+| `approve-or-hold` — default | APPROVE | HOLD | Auto, or HOLD if unavailable. |
 
 A deny match ends evaluation immediately in both modes. Responses and audit
 records retain the selected policy and matched rule. Policy belongs to the

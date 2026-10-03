@@ -49,7 +49,7 @@ class AuthorizationResult:
     source: str
     confidence: float | None = None
     reason: str | None = None
-    policy: str = "strict"
+    policy: str = "approve-or-hold"
     matched_rule: str | None = None
 
     request_id: str | None = None

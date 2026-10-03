@@ -44,7 +44,7 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         self.path = Path(self.tmp.name) / "audit.zova"
         self.store = AuditStore(self.path)
         self.model = Model()
-        self.evaluator = Evaluator(self.model, audit=self.store)
+        self.evaluator = Evaluator(self.model, audit=self.store, policy_name="strict")
         self.server = UnixServer(self.evaluator, Path(self.tmp.name) / "mayi.sock")
         await self.server.start()
 

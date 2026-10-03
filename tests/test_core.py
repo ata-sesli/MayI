@@ -61,7 +61,7 @@ class CoreTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_hard_denies_precede_model(self):
         model = Model()
-        evaluator = Evaluator(model, policy_rules=RULES)
+        evaluator = Evaluator(model, policy_name="strict", policy_rules=RULES)
         for command in (
             "rm -rf /",
             "sudo cargo test",
@@ -144,7 +144,8 @@ class CoreTests(unittest.IsolatedAsyncioTestCase):
             {},
         )
         self.assertEqual(
-            (await Evaluator(policy_rules=RULES).authorize(req)).decision, Decision.DENY
+            (await Evaluator(policy_name="strict", policy_rules=RULES).authorize(req)).decision,
+            Decision.DENY,
         )
 
     async def test_bad_threshold_rejected(self):
@@ -163,7 +164,7 @@ class CoreTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(command=command):
                 self.assertEqual(
                     (
-                        await Evaluator(policy_rules=RULES).authorize(request(command))
+                        await Evaluator(policy_name="strict", policy_rules=RULES).authorize(request(command))
                     ).decision,
                     Decision.DENY,
                 )

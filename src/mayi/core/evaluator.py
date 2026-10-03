@@ -22,7 +22,7 @@ class Evaluator:
         threshold=0.98,
         timeout=10.0,
         audit=None,
-        policy_name="strict",
+        policy_name="approve-or-hold",
         policy_rules=None,
         model_id=None,
         device=None,

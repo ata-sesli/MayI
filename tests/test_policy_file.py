@@ -74,7 +74,7 @@ id = "privilege"
 pattern = "(?:^|\\\\s)sudo(?:\\\\s|$)"
 """)
             rules = PolicyRules.load(path)
-            strict = Evaluator(policy_rules=rules)
+            strict = Evaluator(policy_rules=rules, policy_name="strict")
             self.assertEqual(
                 (await strict.authorize(request("git status"))).decision, "approve"
             )

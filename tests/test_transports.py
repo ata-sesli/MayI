@@ -135,7 +135,7 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         app = Application(Evaluator(policy_rules=RULES))
         for command, expected in (
             ("git status", "approve"),
-            ("sudo x", "deny"),
+            ("sudo x", "hold"),
             ("unknown", "hold"),
         ):
             status, response = await http_call(

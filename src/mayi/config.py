@@ -65,7 +65,7 @@ def hook_endpoint(value):
 
 @dataclass(slots=True)
 class Config:
-    policy_mode: str = "strict"
+    policy_mode: str = "approve-or-hold"
     policy_file: Path | None = None
     policy_rules: object = None
     model: str | None = None

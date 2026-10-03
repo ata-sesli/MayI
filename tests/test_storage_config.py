@@ -17,7 +17,7 @@ class StorageTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "audit.zova"
             store = AuditStore(path)
-            evaluator = Evaluator(Model(), audit=store, policy_rules=RULES)
+            evaluator = Evaluator(Model(), audit=store, policy_name="strict", policy_rules=RULES)
             for command in ("git status", "sudo x", "git commit -m 'quoted'"):
                 await evaluator.authorize(request(command))
             store.close()
@@ -40,7 +40,7 @@ class StorageTests(unittest.IsolatedAsyncioTestCase):
             def record(self, *args):
                 raise OSError("disk unavailable")
 
-        evaluator = Evaluator(Model(), audit=BrokenStore(), policy_rules=RULES)
+        evaluator = Evaluator(Model(), audit=BrokenStore(), policy_name="strict", policy_rules=RULES)
         self.assertEqual(
             (await evaluator.authorize(request("git status"))).decision, Decision.HOLD
         )
