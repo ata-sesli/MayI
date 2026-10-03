@@ -75,6 +75,16 @@ class CliTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(code, 0, err)
         self.assertEqual(json.loads(out)["decision"], "block")
 
+    async def test_new_agent_hook_commands_preserve_native_failures(self):
+        for agent, expected in (("claude", {}), ("opencode", {"effect": "ask", "message": "MayI: ask"})):
+            code, out, err = await self.command("hook", agent, input=b"{bad")
+            self.assertEqual(code, 0, err)
+            self.assertEqual(json.loads(out), expected)
+            code, out, err = await self.command("hook", agent, "--user-prompt", input=b"{bad")
+            self.assertEqual(code, 0, err)
+            self.assertEqual(json.loads(out).get("decision", "block") if agent == "claude"
+                             else json.loads(out)["stored"], "block" if agent == "claude" else False)
+
     async def test_daemon_status_hook_and_granian(self):
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))

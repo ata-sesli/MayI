@@ -6,7 +6,7 @@ import os
 import signal
 import sys
 
-from .adapters.codex import capture_block, run_hook
+from .adapters.common import get_adapter, run_hook
 from .config import load_config
 from .core.evaluator import Evaluator
 from .core.models import AuthorizationRequest, hold
@@ -36,7 +36,7 @@ def parser():
     decide.add_argument("--cwd", default=os.getcwd())
     decide.add_argument("--reason")
     hook = commands.add_parser("hook", help="Run an agent permission hook")
-    hook.add_argument("agent", choices=["codex"])
+    hook.add_argument("agent", choices=["codex", "claude", "opencode"])
     hook.add_argument(
         "--user-prompt",
         action="store_true",
@@ -160,6 +160,7 @@ async def serve(config):
 
 async def execute(args, config):
     if args.command == "hook":
+        adapter = get_adapter(args.agent)
         try:
             event = read_request()
             if args.user_prompt and (
@@ -170,6 +171,7 @@ async def execute(args, config):
             result = await run_hook(
                 event,
                 config.unix_socket,
+                agent=args.agent,
                 timeout=config.hook_timeout
                 if config.hook_endpoints
                 else config.request_timeout + 2,
@@ -179,7 +181,9 @@ async def execute(args, config):
                 telemetry_file=config.hook_telemetry_file,
             )
         except ValueError, UnicodeError, RecursionError, OSError:
-            result = capture_block() if args.user_prompt else {}
+            result = (
+                adapter.capture_block() if args.user_prompt else adapter.translate({})
+            )
         print(json.dumps(result))
     elif args.command == "feedback":
         value = {
@@ -260,7 +264,11 @@ def main(argv=None):
         return 130
     except Exception as error:  # noqa: BLE001 - final CLI failure boundary.
         if args.command == "hook":
-            print(json.dumps(capture_block()) if args.user_prompt else "{}")
+            adapter = get_adapter(args.agent)
+            result = (
+                adapter.capture_block() if args.user_prompt else adapter.translate({})
+            )
+            print(json.dumps(result))
             return 0
         if args.command == "decide":
             print(json.dumps(hold("Configuration or infrastructure failure").to_dict()))

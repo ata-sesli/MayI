@@ -134,7 +134,10 @@ class AuditStore:
             if stmt.step() == self.zova.Step.ROW:
                 saved = json.loads(stmt.column_text(0))
                 identity = ("id", "session_id", "turn_id", "cwd", "prompt")
-                if all(saved[key] == record[key] for key in identity):
+                if (
+                    saved.get("agent", "codex") == record.get("agent", "codex")
+                    and all(saved[key] == record[key] for key in identity)
+                ):
                     return saved
                 raise ValueError("Conflicting prompt delivery")
         with self.db.prepare("SELECT MAX(ordinal) FROM mayi_prompts") as stmt:
@@ -145,20 +148,34 @@ class AuditStore:
             "INSERT INTO mayi_prompts VALUES (?1, ?2, ?3, ?4)"
         ) as stmt:
             stmt.bind_text(1, record["id"])
-            stmt.bind_text(2, record["session_id"])
+            stmt.bind_text(
+                2, prompt_session(record["session_id"], record.get("agent", "codex"))
+            )
             stmt.bind_int(3, ordinal)
             stmt.bind_text(4, json.dumps(record, allow_nan=False))
             stmt.step()
         return record
 
-    def prompts(self, session_id, *, limit=65):
+    def admit_prompt(self, prompt_id):
+        with self.db.prepare("SELECT record FROM mayi_prompts WHERE id = ?1") as stmt:
+            stmt.bind_text(1, prompt_id)
+            if stmt.step() != self.zova.Step.ROW:
+                raise ValueError("Missing prompt")
+            record = json.loads(stmt.column_text(0))
+        record["admitted"] = True
+        with self.db.prepare("UPDATE mayi_prompts SET record = ?1 WHERE id = ?2") as stmt:
+            stmt.bind_text(1, json.dumps(record, allow_nan=False))
+            stmt.bind_text(2, prompt_id)
+            stmt.step()
+
+    def prompts(self, session_id, *, agent="codex", limit=65):
         if not 1 <= limit <= 65:
             raise ValueError("Invalid prompt limit")
         with self.db.prepare(
             "SELECT record FROM mayi_prompts WHERE session_id = ?1 "
             "ORDER BY ordinal ASC LIMIT " + str(int(limit))
         ) as stmt:
-            stmt.bind_text(1, session_id)
+            stmt.bind_text(1, prompt_session(session_id, agent))
             rows = []
             while stmt.step() == self.zova.Step.ROW:
                 rows.append(json.loads(stmt.column_text(0)))
@@ -166,3 +183,8 @@ class AuditStore:
 
     def close(self):
         self.db.close()
+
+
+def prompt_session(session_id, agent):
+    # Keep existing Codex databases readable without rewriting their history.
+    return session_id if agent == "codex" else json.dumps([agent, session_id])

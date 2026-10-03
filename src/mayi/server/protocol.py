@@ -1,6 +1,7 @@
 import json
 
 from ..core.models import hold
+from ..user_context import CONTEXT_AGENTS, PROMPT_SOURCES
 
 MAX_BYTES = 65536
 
@@ -34,8 +35,12 @@ def status(evaluator):
         "telemetry": evaluator.health(),
         "user_context": {
             "required_for_codex": evaluator.require_user_context,
+            "required_for_agents": (
+                sorted(CONTEXT_AGENTS) if evaluator.require_user_context else []
+            ),
             "max_age": evaluator.prompt_ledger.max_age,
             "source": "codex_user_prompt_submit",
+            "sources": PROMPT_SOURCES,
         },
     }
 

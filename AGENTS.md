@@ -4,7 +4,7 @@
 
 MayI is a local-first authorization layer for coding agents. It evaluates a
 proposed operation and returns `approve`, `hold`, or `deny`; it never executes
-the operation. OpenAI Codex's `PermissionRequest` hook is the first adapter.
+the operation. Adapters support Codex, Claude Code and OpenCode V2.
 
 Use Python 3.14. Prefer the standard library for application logic. Granian
 serves HTTP/HTTPS, Zova stores audit records, and the separately installed
@@ -23,7 +23,8 @@ without a concrete requirement.
 | `src/mayi/model/engine.py` | Public Auto runtime API, validated probabilities, serialized inference. |
 | `src/mayi/model/prompt.py` | Authorization question and operational state encoding. |
 | `src/mayi/server/` | JSON protocol, Unix socket server/client, raw ASGI application. |
-| `src/mayi/adapters/codex.py` | Hook normalization and output translation. |
+| `src/mayi/adapters/` | Shared hook client and Codex/Claude/OpenCode normalization and output translation. |
+| `plugins/opencode/` | OpenCode V2 plugin; invokes the Python hook client over stdin/argv. |
 | `src/mayi/hook_client.py` | Ordered Unix/HTTP fallback and bounded HTTP worker. |
 | `src/mayi/storage/zova.py` | Zova decision/event records and log queries. |
 | `src/mayi/user_context.py` | Daemon prompt ledger, provenance, ordering and context resolution. |
@@ -65,13 +66,26 @@ without a concrete requirement.
   an already running model call.
 - Codex APPROVE maps to `allow`, DENY maps to `deny`, and HOLD/errors emit `{}`
   for native approval fallthrough. The hook must not load Auto or open Zova.
-- Codex requests require persisted UserPromptSubmit context matching session,
-  current turn, and directory. Use hook captures directly without origin proof
+- Claude uses the same permission outputs; OpenCode V2 maps HOLD/errors to `ask`.
+  All supported agent requests require persisted context before rules or Auto.
+  Namespace prompt sessions by agent; retain compatibility with existing Codex
+  records. Codex matches session, turn and directory; Claude matches the latest
+  captured session revision and directory because its hooks have no shared turn
+  ID. Do not claim Claude has exact turn association.
+- OpenCode prompt drafts stay pending until its typed session API confirms their
+  message IDs in active context. Cancelled/queued drafts cannot authorize calls;
+  preserve already admitted restrictions across compaction. Use permission
+  source IDs to resolve the actual running tool input, never guessed timing.
+  Separate resource grants must not bypass review via a shell allow rule.
+  Keep the V2 plugin on its pinned public API; do not silently add V1 support.
+- Use hook captures directly without origin proof
   or signing keys; generated continuations may be treated as instructions.
   Missing, stale, oversized, or ambiguously ordered context HOLD before policy
   or model evaluation. Preserve original instructions and later corrections in
   daemon arrival order. No transcript parsing or agent-writable context cache.
   Capture failures block submission; recheck context before granting approval.
+  Keep native hook timeouts above the MayI client deadline. Claude command-hook
+  timeouts may deliver prompts without completed capture; document that limit.
 - Hook endpoints are sequential availability fallback. Stop on every valid
   decision, including HOLD/DENY. Authentication, TLS, or malformed-response
   failures must not advance to another server. Keep total deadlines bounded,
@@ -171,6 +185,18 @@ Normal tests require no Auto checkpoint:
 ```sh
 .venv/bin/python -m unittest discover -s tests -v
 ```
+
+The optional OpenCode bridge test runs when Bun and plugin dependencies are
+installed. It uses an isolated real MayI CLI, Unix socket and audit store:
+
+```sh
+bun install --cwd plugins/opencode --frozen-lockfile
+bun run --cwd plugins/opencode typecheck
+bun test plugins/opencode/index.test.ts
+```
+
+The standalone Bun suite skips its daemon bridge unless the Python harness
+supplies it; do not count the skipped case as integration verification.
 
 Tests include temporary Zova files, Unix sockets, and a local Granian listener,
 so the environment must permit local sockets. Run focused tests while changing

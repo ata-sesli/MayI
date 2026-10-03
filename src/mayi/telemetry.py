@@ -52,7 +52,7 @@ def milliseconds(start):
 def normalize_event(value):
     if not isinstance(value, dict):
         raise TypeError("Invalid event")
-    common = {"kind", "id", "request_id", "session_id", "turn_id", "tool_use_id"}
+    common = {"kind", "id", "request_id", "session_id", "turn_id", "tool_use_id", "agent"}
     fields = {
         "tool_outcome": {"tool", "exit_code", "duration_ms"},
         "human_feedback": {"human_decision"},
@@ -105,7 +105,10 @@ def normalize_event(value):
             or duration < 0
         ):
             raise ValueError("Invalid duration")
-        result["source"] = "codex_post_tool_use"
+        agent = result.get("agent", "codex")
+        if agent not in {"codex", "claude", "opencode"}:
+            raise ValueError("Unsupported event agent")
+        result["source"] = agent + "_post_tool_use"
     result.setdefault("id", str(uuid.uuid4()))
     result["timestamp"] = datetime.now(UTC).isoformat()
     return result

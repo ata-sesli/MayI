@@ -5,8 +5,9 @@ MayI evaluates coding-agent operations and returns **approve**, **hold**, or
 
 Use it to automate some approval prompts while keeping human review for
 uncertain requests. Optional rules handle explicit cases; Auto-200M INT8 checks
-the rest against captured user instructions. A resident daemon serves the Codex
-hook and records decisions in Zova. MayI never executes the proposed operation.
+the rest against captured user instructions. A resident daemon serves Codex,
+Claude Code and OpenCode V2 adapters and records decisions in Zova. MayI never
+executes the proposed operation.
 
 Version **0.1.0** — experimental. The current model can incorrectly approve
 requests, including vague “go ahead” instructions after an earlier restriction.
@@ -18,6 +19,8 @@ The default 98% threshold is not a calibrated safety guarantee.
 - [Quick start](#quick-start)
 - [How decisions work](#how-decisions-work)
 - [Connect Codex](#connect-codex)
+- [Connect Claude Code](#connect-claude-code)
+- [Connect OpenCode V2](#connect-opencode-v2)
 - [Configure rules](#configure-rules)
 - [Container deployment](#container-deployment)
 - [Local Auto runtime](#local-auto-runtime)
@@ -49,6 +52,8 @@ its checkpoint automatically, or follow [local runtime setup](#local-auto-runtim
 | Container | Podman or Docker; built and tested on Linux/amd64. |
 | Auto inference | CPU Torch and Transformers, plus the pinned INT8 checkpoint. |
 | Codex adapter | Codex with hooks enabled; a running MayI daemon. |
+| Claude Code adapter | Claude Code command hooks; a running MayI daemon. |
+| OpenCode V2 adapter | V2 plugin API, tested against `@opencode/plugin` 2.0.22; Bun to install the plugin dependencies. |
 | Remote access | Verified HTTPS and a bearer token. Tailscale is optional. |
 
 ## Quick start
@@ -88,8 +93,8 @@ The default socket is `~/.mayi/mayi.sock`; audit storage is
 
 ```mermaid
 flowchart LR
-    Prompt["Codex UserPromptSubmit"] --> Ledger["Persisted instruction history"]
-    Tool["Codex PermissionRequest"] --> Engine["Shared evaluator"]
+    Prompt["Agent prompt capture"] --> Ledger["Persisted instruction history"]
+    Tool["Agent permission adapter"] --> Engine["Shared evaluator"]
     Ledger --> Engine
     Engine --> Rules["Configured deny / allow rules"]
     Rules --> Auto["Auto when no rule matches"]
@@ -98,8 +103,10 @@ flowchart LR
     Audit --> Result["APPROVE / HOLD / DENY"]
 ```
 
-For Codex requests, MayI first resolves instructions matching the session,
-current turn and working directory. Missing, stale, oversized or ambiguously
+For supported agent requests, MayI first resolves instructions matching the
+agent, session and working directory. Codex also requires its current turn ID;
+Claude uses the latest captured session revision; OpenCode uses admitted user
+message IDs. Missing, stale, oversized or ambiguously
 ordered context returns HOLD before rules or model evaluation.
 
 It then checks deny rules, exact-command allow rules, and finally Auto. Auto
@@ -159,7 +166,7 @@ Capture failure blocks prompt submission. Permission-request errors fall
 through to Codex's normal prompt. `PermissionRequest` runs only when Codex
 would otherwise ask for approval, not for every tool call.
 
-For a remote-only daemon, the Codex machine needs just the installed hook
+For a remote-only daemon, the agent machine needs just the installed hook
 client and an endpoint configuration. It does not need Auto or a local daemon.
 
 ### Multiple endpoints
@@ -196,6 +203,101 @@ the session's context returns HOLD. HTTPS endpoints can be replaced with
 `unix_socket = "~/.mayi/mayi.sock"` for a local daemon. Without an endpoint list,
 the hook uses the configured `server.unix_socket`.
 
+## Connect Claude Code
+
+Merge these entries into `~/.claude/settings.json` or the project's
+`.claude/settings.json`. Replace the executable paths and use the same MayI
+configuration for both hooks:
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [{"hooks": [{
+      "type": "command",
+      "command": "/absolute/path/to/mayi/.venv/bin/mayi hook claude --user-prompt",
+      "timeout": 15
+    }]}],
+    "PermissionRequest": [{"hooks": [{
+      "type": "command",
+      "command": "/absolute/path/to/mayi/.venv/bin/mayi hook claude",
+      "timeout": 15
+    }]}]
+  }
+}
+```
+
+For custom configuration, add `--config /absolute/path/to/hook.toml` before
+`hook claude`. The existing [endpoint configuration](#multiple-endpoints),
+authentication and sticky fallback also apply. Restart the MayI daemon on this
+version before connecting a new adapter; no daemon is started by a hook.
+
+Claude APPROVE emits a one-request `allow`, DENY emits `deny`, and HOLD/errors
+emit `{}` for native permission handling. Captures are stored directly in Zova,
+including earlier instructions and later corrections. Claude's hook payloads
+have no shared turn ID: MayI uses the latest captured revision for the session
+and directory and rechecks it before approval. It cannot prove which turn
+produced a permission request, and ambiguous parallel work should receive native
+review.
+
+Set Claude's hook timeout above MayI's total client deadline; the example covers
+the default MayI deadline. For the 25-second remote example, use 30 seconds.
+MayI reports capture failures as a blocked prompt, but Claude's native command
+hook timeout can still deliver a prompt without completing capture. Claude's
+`PermissionRequest` also excludes sandboxed-command network permission prompts.
+See the [Claude Code hook contract](https://code.claude.com/docs/en/hooks).
+
+For outcome telemetry, add the same `mayi hook claude` command under
+`PostToolUse` and `PostToolUseFailure`. Only invocation identifiers and supplied
+structured metrics are retained; textual outputs and errors are omitted.
+
+## Connect OpenCode V2
+
+Install the local plugin's dependencies from the MayI checkout:
+
+```sh
+bun install --cwd plugins/opencode --frozen-lockfile
+```
+
+Add this entry to your OpenCode V2 `opencode.jsonc`, replacing the paths:
+
+```json
+{
+  "plugins": [{
+    "package": "/absolute/path/to/mayi/plugins/opencode",
+    "options": {
+      "mayiExecutable": "/absolute/path/to/mayi/.venv/bin/mayi",
+      "mayiConfig": "/absolute/path/to/hook.toml",
+      "timeoutMs": 30000
+    }
+  }]
+}
+```
+
+Omit `mayiConfig` to use MayI's default configuration. `mayiExecutable` defaults
+to `mayi` on PATH. `timeoutMs` bounds the client subprocess; keep it above
+MayI's total hook deadline. Start the updated daemon and restart OpenCode after
+installing the plugin. This plugin targets the published V2 API
+(`@opencode/plugin` 2.0.22), not the V1 plugin API.
+
+The plugin captures prompts at admission and sends them directly to the daemon.
+At permission evaluation, it uses OpenCode's typed session API to identify
+admitted user messages and the exact running tool call. Pending or cancelled
+drafts do not authorize operations. Previously admitted instructions remain in
+the daemon after compaction. Missing captures, unknown tool associations and
+adapter errors request native review.
+
+APPROVE becomes `allow`, HOLD becomes `ask`, and DENY becomes `deny`. The plugin
+reviews native `allow` and `ask` evaluations; native configured denies remain
+final. It rechecks admitted message IDs before applying an automatic approval.
+Separate resource permissions are passed to Auto and cannot be approved by a
+shell command allow rule alone.
+
+The plugin also sends best-effort outcome telemetry using invocation IDs and
+available structured metrics. It uses the Python hook client for the same
+authenticated transport and ordered fallback as Codex. It never executes the
+proposed command, loads Auto, opens Zova, reads transcript files or writes a
+prompt cache. See the [OpenCode V2 plugin API](https://opencode.ai/v2/docs/build/plugins).
+
 ## Configure rules
 
 Rules live in a TOML file. There are no built-in command allow or deny lists:
@@ -229,7 +331,7 @@ id = "privilege"
 pattern = '\bsudo\b'
 ```
 
-Codex's Bash tool is normalized to `shell`. Allow rules match the exact
+Codex/Claude's Bash and OpenCode's bash tools are normalized to `shell`. Allow rules match the exact
 normalized tool and command; shell operators, redirection, conflicting command
 fields and additional tool settings prevent static approval. Deny patterns are
 Python regular expressions applied to the operation, directory and string tool
@@ -316,7 +418,7 @@ beside the audit database. Auto is the only supported model implementation.
 The ML packages are outside MayI's lockfile. After installing them, use
 `.venv/bin/mayi` or `uv run --no-sync`; an exact sync can remove those packages.
 A command-only `decide` invocation does not supply captured instructions, so
-Auto will HOLD it. Use the paired Codex hooks for context-aware decisions.
+Auto will HOLD it. Use an agent adapter with prompt capture for context-aware decisions.
 
 ## CLI and API
 
@@ -328,6 +430,8 @@ Auto will HOLD it. Use the paired Codex hooks for context-aware decisions.
 | `mayi decide --stdin` | Evaluate a normalized JSON request from stdin. |
 | `mayi hook codex --user-prompt` | Persist a submitted prompt; block on failure. |
 | `mayi hook codex` | Handle permission requests or supported outcome events. |
+| `mayi hook claude --user-prompt` / `mayi hook claude` | Claude Code prompt capture and permission/outcome hooks. |
+| `mayi hook opencode --user-prompt` / `mayi hook opencode` | Internal OpenCode V2 plugin bridge; use the plugin above. |
 | `mayi logs --decision hold --limit 20` | Read decision audits. |
 | `mayi logs --events --limit 50` | Read telemetry events. |
 | `mayi feedback --request-id REQUEST_UUID --decision approve` | Record explicit human feedback; use `deny` for rejection. |
@@ -349,9 +453,11 @@ A minimal normalized request looks like this:
 {"agent":"manual","tool":"shell","operation":"git status","input":{"command":"git status"}}
 ```
 
-With no configured rules or context, it returns HOLD. Codex requests additionally
-need `metadata.session_id`, `metadata.turn_id` and `cwd` matching persisted
-captures. Caller-supplied `user_context` is rejected.
+With no configured rules or context, it returns HOLD. Supported agent requests
+need `metadata.session_id` and `cwd` matching their persisted captures. Codex
+requires `metadata.turn_id`; OpenCode additionally supplies the active
+`metadata.context_turn_ids`. Claude uses the latest captured session revision.
+Caller-supplied `user_context` is rejected.
 
 The Python convenience API requires no daemon:
 
@@ -463,11 +569,26 @@ Normal tests use mocked inference and real temporary stores/listeners, download
 no checkpoint, and require local socket access. `uv build` writes distributions
 to `dist/`. [AGENTS.md](AGENTS.md) describes contributor conventions and invariants.
 
+For OpenCode V2, install plugin dependencies and check its public API types:
+
+```sh
+bun install --cwd plugins/opencode --frozen-lockfile
+bun run --cwd plugins/opencode typecheck
+bun test plugins/opencode/index.test.ts
+```
+
+The Python suite also runs the plugin-to-CLI-to-daemon test when Bun and these
+dependencies are installed. That test uses real temporary Zova storage and
+checks audited APPROVE, HOLD and DENY outcomes without executing tool commands.
+The standalone Bun suite skips that bridge case unless supplied a test daemon.
+
 ## Further reading
 
 - [Example configuration](config.example.toml) and [container defaults](config.docker.toml).
 - [Contributor guide](AGENTS.md): project structure and authorization invariants.
 - [Codex hooks](https://learn.chatgpt.com/docs/hooks): supported events and hook setup.
+- [Claude Code hooks](https://code.claude.com/docs/en/hooks): prompt, permission and outcome events.
+- [OpenCode V2 plugins](https://opencode.ai/v2/docs/build/plugins): prompt admission and permission evaluation.
 - [Auto-200M INT8](https://huggingface.co/ProCreations/auto-200m-2-int8): the model checkpoint.
 
 ## License

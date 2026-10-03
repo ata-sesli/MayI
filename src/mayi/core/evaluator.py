@@ -6,7 +6,7 @@ import uuid
 
 from ..model.engine import Prediction
 from ..telemetry import context, milliseconds, normalize_event
-from ..user_context import ContextUnavailable, PromptLedger
+from ..user_context import CONTEXT_AGENTS, ContextUnavailable, PromptLedger
 from . import policy
 from .decision import Decision
 from .models import AuthorizationRequest, AuthorizationResult, hold
@@ -135,7 +135,7 @@ class Evaluator:
             candidate = request.metadata.get("request_id")
             if candidate is not None:
                 request_id = str(uuid.UUID(candidate))
-            if self.require_user_context and request.agent == "codex":
+            if self.require_user_context and request.agent in CONTEXT_AGENTS:
                 context_status = {"status": "unavailable"}
                 resolved_context = self.prompt_ledger.resolve(request)
                 request.user_context = resolved_context

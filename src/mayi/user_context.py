@@ -1,4 +1,4 @@
-"""Daemon-owned instruction ledger sourced directly from UserPromptSubmit."""
+"""Daemon-owned instruction ledger sourced directly from agent prompt hooks."""
 
 import hashlib
 import json
@@ -9,6 +9,12 @@ import uuid
 MAX_PROMPT_BYTES = 8192
 MAX_CONTEXT_BYTES = 32768
 MAX_INSTRUCTIONS = 64
+CONTEXT_AGENTS = {"codex", "claude", "opencode"}
+PROMPT_SOURCES = {
+    "codex": "codex_user_prompt_submit",
+    "claude": "claude_user_prompt_submit",
+    "opencode": "opencode_session_prompt",
+}
 
 
 class ContextUnavailable(ValueError):
@@ -51,10 +57,15 @@ class PromptLedger:
 
     def capture(self, value):
         fields = {"id", "session_id", "turn_id", "cwd", "prompt"}
-        if not isinstance(value, dict) or set(value) != fields:
+        if not isinstance(value, dict) or set(value) - {"agent"} != fields:
             raise ValueError("Invalid prompt envelope")
         value = dict(value)
+        agent = value.get("agent", "codex")
+        if agent not in CONTEXT_AGENTS:
+            raise ValueError("Unsupported context agent")
         value["id"] = str(uuid.UUID(value["id"]))
+        if agent == "claude":
+            value["turn_id"] = value["id"]
         if not all(identifier(value[k]) for k in ("session_id", "turn_id")):
             raise ValueError("Missing prompt association")
         if (
@@ -75,8 +86,9 @@ class PromptLedger:
         record = {
             **value,
             "digest": digest,
-            "source": "codex_user_prompt_submit",
+            "source": PROMPT_SOURCES[agent],
             "received_at": time.time(),
+            "admitted": agent != "opencode",
         }
         if self.store is None:
             raise OSError("Prompt persistence unavailable")
@@ -90,15 +102,43 @@ class PromptLedger:
     def resolve(self, request):
         session = request.metadata.get("session_id")
         turn = request.metadata.get("turn_id")
-        if not identifier(session) or not identifier(turn) or not request.cwd:
+        if not identifier(session) or not request.cwd or (
+            request.agent != "claude" and not identifier(turn)
+        ):
             raise ContextUnavailable("missing_association")
         if self.store is None:
             raise ContextUnavailable("missing_store")
-        rows = self.store.prompts(session, limit=MAX_INSTRUCTIONS + 1)
+        rows = self.store.prompts(
+            session, agent=request.agent, limit=MAX_INSTRUCTIONS + 1
+        )
         if not rows:
             raise ContextUnavailable("missing_context")
         if len(rows) > MAX_INSTRUCTIONS:
             raise ContextUnavailable("context_overflow")
+        snapshot = [(r["id"], r["digest"]) for r in rows]
+        if request.agent == "opencode":
+            turns = request.metadata.get("context_turn_ids")
+            if (
+                not isinstance(turns, list)
+                or not turns
+                or len(turns) > MAX_INSTRUCTIONS
+                or not all(identifier(t) for t in turns)
+                or len(set(turns)) != len(turns)
+                or turns[-1] != turn
+            ):
+                raise ContextUnavailable("missing_association")
+            by_turn = {r["turn_id"]: r for r in rows}
+            if any(t not in by_turn for t in turns):
+                raise ContextUnavailable("missing_context")
+            if [r["turn_id"] for r in rows if r["turn_id"] in turns] != turns:
+                raise ContextUnavailable("ambiguous_order")
+            for row in rows:
+                if row["turn_id"] in turns and not row.get("admitted"):
+                    self.store.admit_prompt(row["id"])
+                    row["admitted"] = True
+            rows = [r for r in rows if r.get("admitted")]
+        if request.agent == "claude":
+            turn = rows[-1]["turn_id"]
         if rows[-1]["turn_id"] != turn:
             raise ContextUnavailable("turn_mismatch")
         age = time.time() - rows[-1]["received_at"]
@@ -112,7 +152,7 @@ class PromptLedger:
         for sequence, row in enumerate(rows, 1):
             if row["cwd"] != request.cwd:
                 raise ContextUnavailable("directory_mismatch")
-            if row.get("source") != "codex_user_prompt_submit":
+            if row.get("source") != PROMPT_SOURCES[request.agent]:
                 raise ContextUnavailable("unknown_source")
             # Older attested records can be retained as original captures.
             # Sequence is assigned from persisted arrival order, never the caller.
@@ -140,7 +180,7 @@ class PromptLedger:
             "instructions": instructions,
             "latest_id": previous,
             "fingerprint": hashlib.sha256(
-                json.dumps([(r["id"], r["digest"]) for r in rows]).encode()
+                json.dumps(snapshot).encode()
             ).hexdigest(),
         }
         if len(auto_user_request(result).encode()) > MAX_CONTEXT_BYTES:

@@ -29,6 +29,7 @@ auto-200m-2-int8/
 
 # Local tooling caches
 .ruff_cache/
+node_modules/
 
 # Local hook telemetry
 *.telemetry.jsonl

@@ -160,7 +160,7 @@ class TelemetryTests(unittest.IsolatedAsyncioTestCase):
             },
         }
         with patch(
-            "mayi.adapters.codex.query", AsyncMock(return_value={"stored": True})
+            "mayi.adapters.common.query", AsyncMock(return_value={"stored": True})
         ) as query:
             self.assertEqual(await run_hook(event, Path("/unused")), {})
             payload = query.call_args.args[1]
@@ -254,7 +254,7 @@ class TelemetryTests(unittest.IsolatedAsyncioTestCase):
             append_routing(link, {"attempts": []})
             self.assertEqual(target.read_text(), "keep")
             with patch(
-                "mayi.adapters.codex.query",
+                "mayi.adapters.common.query",
                 AsyncMock(return_value={"decision": "approve"}),
             ):
                 result = await run_hook(
