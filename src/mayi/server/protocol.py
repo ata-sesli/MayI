@@ -27,11 +27,16 @@ def encode(value):
 def status(evaluator):
     return {
         "status": "ready",
-        "julia_available": evaluator.model is not None,
-        "approval_threshold": evaluator.threshold,
+        "model_available": evaluator.model is not None,
+        "approval_threshold": evaluator.context["threshold"],
         "policy": evaluator.policy_name,
         "context": evaluator.context,
         "telemetry": evaluator.health(),
+        "user_context": {
+            "required_for_codex": evaluator.require_user_context,
+            "max_age": evaluator.prompt_ledger.max_age,
+            "source": "codex_user_prompt_submit",
+        },
     }
 
 
@@ -44,4 +49,6 @@ async def dispatch(evaluator, data):
         return status(evaluator)
     if isinstance(value, dict) and value.get("action") == "event":
         return evaluator.record_event(value.get("event"))
+    if isinstance(value, dict) and value.get("action") == "user_prompt":
+        return evaluator.record_prompt(value.get("prompt"))
     return (await evaluator.authorize(value)).to_dict()

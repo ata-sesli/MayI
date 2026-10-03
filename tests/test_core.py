@@ -6,14 +6,14 @@ from pathlib import Path
 from mayi import AuthorizationRequest, Decision, authorize
 from mayi.core.evaluator import Evaluator
 from mayi.core.policy import PolicyRules
-from mayi.julia.engine import Prediction
+from mayi.model.engine import Prediction
 
 RULES = PolicyRules.load(Path(__file__).parent / "fixtures/configured_policy.toml")
 
 
 def request(command="git commit -m change", **kwargs):
     return AuthorizationRequest(
-        agent="codex",
+        agent="test",
         tool="shell",
         operation=command,
         cwd="/work/project",
@@ -102,6 +102,7 @@ class CoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_threshold_and_invalid_predictions(self):
         cases = [
             (Prediction("approve", 0.98, 0.02), Decision.APPROVE),
+            (Prediction("approve", 0.99, 0.01), Decision.APPROVE),
             (Prediction("approve", 0.979, 0.021), Decision.HOLD),
             (Prediction("hold", 0.999, 0.001), Decision.HOLD),
             (Prediction("approve", math.nan, 0), Decision.HOLD),
@@ -134,7 +135,7 @@ class CoreTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_tool_input_sensitive_path_denied(self):
         req = AuthorizationRequest(
-            "codex",
+            "test",
             "write",
             None,
             "/work",
@@ -167,7 +168,7 @@ class CoreTests(unittest.IsolatedAsyncioTestCase):
                     Decision.DENY,
                 )
 
-    async def test_codex_description_does_not_disable_static_allow(self):
+    async def test_description_does_not_disable_static_allow(self):
         req = request("git status")
         req.input["description"] = "Inspect the working tree"
         self.assertEqual(

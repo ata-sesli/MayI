@@ -10,13 +10,9 @@ COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY src/ ./src/
 RUN uv sync --locked --no-dev --no-editable --no-cache
 
-# Keep the checkpoint out of the image; the daemon caches it in /data on startup.
-ARG JULIA_REVISION=a85b127321d580d65176c89ced8273f305745d85
-RUN uv pip install --no-cache --index-url https://download.pytorch.org/whl/cpu 'torch>=2.6' \
-    && uv pip install --no-cache huggingface_hub \
-    && python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='SupersonicLabs/Julia-1', revision='${JULIA_REVISION}', local_dir='/tmp/julia-source', allow_patterns=['pyproject.toml', 'julia/**'])" \
-    && uv pip install --no-cache /tmp/julia-source \
-    && rm -rf /tmp/julia-source
+# Auto uses CPU Torch and Transformers; weights are cached in /data at startup.
+RUN uv pip install --no-cache --index-url https://download.pytorch.org/whl/cpu 'torch==2.14.0' \
+    && uv pip install --no-cache 'transformers==5.17.0'
 
 COPY config.docker.toml ./config.toml
 COPY policy.toml ./policy.toml

@@ -4,8 +4,9 @@ import math
 import time
 import uuid
 
-from ..julia.engine import Prediction
+from ..model.engine import Prediction
 from ..telemetry import context, milliseconds, normalize_event
+from ..user_context import ContextUnavailable, PromptLedger
 from . import policy
 from .decision import Decision
 from .models import AuthorizationRequest, AuthorizationResult, hold
@@ -25,6 +26,8 @@ class Evaluator:
         policy_rules=None,
         model_id=None,
         device=None,
+        require_user_context=True,
+        context_max_age=3600,
     ):
         if policy_name not in ("strict", "approve-or-hold"):
             raise ValueError("Unknown authorization policy")
@@ -46,6 +49,12 @@ class Evaluator:
         self.threshold = threshold
         self.timeout = timeout
         self.audit = audit
+        if type(require_user_context) is not bool:
+            raise ValueError("Invalid context requirement")
+        self.require_user_context = require_user_context
+        self.prompt_ledger = PromptLedger(
+            audit, max_age=context_max_age
+        )
         self.context = context(
             policy_name,
             threshold,
@@ -93,6 +102,12 @@ class Evaluator:
             self.counters["event_failures"] += 1
             return {"stored": False}
 
+    def record_prompt(self, value):
+        try:
+            return self.prompt_ledger.capture(value)
+        except Exception:  # noqa: BLE001 - failed capture never establishes authority.
+            return {"stored": False}
+
     async def authorize(self, value):
         self.counters["requests"] += 1
         self.counters["active_requests"] += 1
@@ -106,9 +121,11 @@ class Evaluator:
         request_id = str(uuid.uuid4())
         prediction = None
         request = None
+        resolved_context = None
+        context_status = {"status": "not_required"}
         timings = {
             "policy_ms": 0.0,
-            "julia_ms": 0.0,
+            "model_ms": 0.0,
             "audit_ms": None,
             "total_ms": None,
         }
@@ -118,6 +135,15 @@ class Evaluator:
             candidate = request.metadata.get("request_id")
             if candidate is not None:
                 request_id = str(uuid.UUID(candidate))
+            if self.require_user_context and request.agent == "codex":
+                context_status = {"status": "unavailable"}
+                resolved_context = self.prompt_ledger.resolve(request)
+                request.user_context = resolved_context
+                context_status = {
+                    "status": "captured",
+                    "fingerprint": resolved_context["fingerprint"],
+                    "ids": [r["id"] for r in resolved_context["instructions"]],
+                }
             stage = time.monotonic()
             result = policy.hard_deny(request, self.policy_rules) or policy.known_safe(
                 request, self.policy_rules
@@ -129,7 +155,7 @@ class Evaluator:
                     result.decision = Decision.HOLD
                     result.source = "static_hold"
             if result is None:
-                result = hold("Julia unavailable")
+                result = hold("Model unavailable")
                 if self.model is not None:
                     stage = time.monotonic()
                     try:
@@ -142,11 +168,11 @@ class Evaluator:
                         self.counters["model_failures"] += 1
                         raise
                     finally:
-                        timings["julia_ms"] = milliseconds(stage)
+                        timings["model_ms"] = milliseconds(stage)
                     if not isinstance(prediction, Prediction) or not prediction.valid():
                         self.counters["model_failures"] += 1
                         prediction = None
-                        result = hold("Invalid Julia output")
+                        result = hold("Invalid Model output")
                     else:
                         approved = (
                             prediction.choice == "approve"
@@ -154,12 +180,20 @@ class Evaluator:
                         )
                         result = AuthorizationResult(
                             Decision.APPROVE if approved else Decision.HOLD,
-                            "julia",
+                            "model",
                             prediction.approve_probability,
                             "Approval threshold met"
                             if approved
                             else "Human review required",
                         )
+            if resolved_context is not None and result.decision == Decision.APPROVE:
+                latest = self.prompt_ledger.resolve(request)
+                if latest["fingerprint"] != resolved_context["fingerprint"]:
+                    raise ContextUnavailable("context_changed")
+        except ContextUnavailable as error:
+            context_status = {"status": str(error)}
+            result = hold("User context unavailable: " + str(error))
+            result.source = "user_context"
         except Exception:  # noqa: BLE001 - uncertain authorization must become HOLD.
             if request is None:
                 self.counters["invalid_requests"] += 1
@@ -168,7 +202,7 @@ class Evaluator:
             prediction = None
         result.policy = self.policy_name
         result.request_id = request_id
-        result.context = dict(self.context)
+        result.context = {**self.context, "user_context": context_status}
         result.timings = dict(timings)
         audit_started = time.monotonic()
         if self.audit is not None:
@@ -185,7 +219,7 @@ class Evaluator:
         timings["audit_ms"] = milliseconds(audit_started) if self.audit else 0.0
         timings["total_ms"] = milliseconds(started)
         result.request_id = request_id
-        result.context = dict(self.context)
+        result.context = {**self.context, "user_context": context_status}
         result.timings = timings
         self.decisions[result.decision] += 1
         if self.audit is not None:
@@ -214,5 +248,5 @@ class Evaluator:
 
 
 async def authorize(request):
-    """Evaluate deterministic policy; use Evaluator for a resident Julia model."""
+    """Evaluate deterministic policy; use Evaluator for a resident Model model."""
     return await Evaluator().authorize(request)

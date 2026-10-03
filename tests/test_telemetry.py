@@ -29,7 +29,7 @@ class TelemetryTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(value["request_id"])
             self.assertEqual(value["context"]["threshold"], 0.98)
             self.assertTrue(value["context"]["config_version"])
-            for name in ("policy_ms", "julia_ms", "audit_ms", "total_ms"):
+            for name in ("policy_ms", "model_ms", "audit_ms", "total_ms"):
                 self.assertGreaterEqual(value["timings"][name], 0)
             self.assertGreaterEqual(
                 value["timings"]["total_ms"], value["timings"]["audit_ms"]

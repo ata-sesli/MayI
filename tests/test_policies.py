@@ -55,7 +55,7 @@ class PolicyTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(row["policy"], "approve-or-hold")
                 self.assertEqual(row["matched_rule"], result.matched_rule)
                 self.assertEqual(row["decision"], "hold")
-                self.assertEqual(row["julia_choice"], None)
+                self.assertEqual(row["model_choice"], None)
             finally:
                 store.close()
             config_path.write_text('[policy]\nmode="unknown"\n')

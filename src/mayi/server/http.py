@@ -80,6 +80,10 @@ class Application:
             await self._reply(
                 send, 200, self.evaluator.record_event(value.get("event"))
             )
+        elif isinstance(value, dict) and value.get("action") == "user_prompt":
+            await self._reply(
+                send, 200, self.evaluator.record_prompt(value.get("prompt"))
+            )
         else:
             result = await self.evaluator.authorize(value)
             await self._reply(send, 200, result.to_dict())

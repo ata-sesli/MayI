@@ -6,6 +6,8 @@ import stat
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ..model.engine import Prediction
+
 
 class AuditStore:
     def __init__(self, path, *, retain_input=False):
@@ -36,10 +38,16 @@ class AuditStore:
             self.db.exec(
                 "CREATE TABLE IF NOT EXISTS mayi_events (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, kind TEXT NOT NULL, record TEXT NOT NULL)"
             )
+            self.db.exec(
+                "CREATE TABLE IF NOT EXISTS mayi_prompts ("
+                "id TEXT PRIMARY KEY, session_id TEXT NOT NULL, "
+                "ordinal INTEGER NOT NULL, record TEXT NOT NULL)"
+            )
         finally:
             os.umask(old_mask)
 
     def record(self, request_id, request, result, prediction):
+        binary = prediction if isinstance(prediction, Prediction) else None
         record = {
             "id": request_id,
             "timestamp": datetime.now(UTC).isoformat(),
@@ -48,13 +56,9 @@ class AuditStore:
             "operation": request.operation if request else None,
             "cwd": request.cwd if request else None,
             **result.to_dict(),
-            "julia_choice": prediction.choice if prediction else None,
-            "julia_approve_probability": prediction.approve_probability
-            if prediction
-            else None,
-            "julia_hold_probability": prediction.hold_probability
-            if prediction
-            else None,
+            "model_choice": binary.choice if binary else None,
+            "model_approve_probability": binary.approve_probability if binary else None,
+            "model_hold_probability": binary.hold_probability if binary else None,
             "human_decision": None,
             "metadata": request.metadata if request else {},
         }
@@ -119,6 +123,42 @@ class AuditStore:
             "SELECT record FROM mayi_events ORDER BY timestamp DESC, id DESC LIMIT "
             + str(int(limit))
         ) as stmt:
+            rows = []
+            while stmt.step() == self.zova.Step.ROW:
+                rows.append(json.loads(stmt.column_text(0)))
+            return rows
+
+    def record_prompt(self, record):
+        with self.db.prepare("SELECT record FROM mayi_prompts WHERE id = ?1") as stmt:
+            stmt.bind_text(1, record["id"])
+            if stmt.step() == self.zova.Step.ROW:
+                saved = json.loads(stmt.column_text(0))
+                identity = ("id", "session_id", "turn_id", "cwd", "prompt")
+                if all(saved[key] == record[key] for key in identity):
+                    return saved
+                raise ValueError("Conflicting prompt delivery")
+        with self.db.prepare("SELECT MAX(ordinal) FROM mayi_prompts") as stmt:
+            stmt.step()
+            ordinal = (stmt.column_int(0) or 0) + 1
+        record = {**record, "ordinal": ordinal}
+        with self.db.prepare(
+            "INSERT INTO mayi_prompts VALUES (?1, ?2, ?3, ?4)"
+        ) as stmt:
+            stmt.bind_text(1, record["id"])
+            stmt.bind_text(2, record["session_id"])
+            stmt.bind_int(3, ordinal)
+            stmt.bind_text(4, json.dumps(record, allow_nan=False))
+            stmt.step()
+        return record
+
+    def prompts(self, session_id, *, limit=65):
+        if not 1 <= limit <= 65:
+            raise ValueError("Invalid prompt limit")
+        with self.db.prepare(
+            "SELECT record FROM mayi_prompts WHERE session_id = ?1 "
+            "ORDER BY ordinal ASC LIMIT " + str(int(limit))
+        ) as stmt:
+            stmt.bind_text(1, session_id)
             rows = []
             while stmt.step() == self.zova.Step.ROW:
                 rows.append(json.loads(stmt.column_text(0)))

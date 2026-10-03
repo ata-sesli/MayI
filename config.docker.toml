@@ -1,5 +1,5 @@
-[julia]
-model = "hf://SupersonicLabs/Julia-1@a85b127321d580d65176c89ced8273f305745d85"
+[model]
+model = "hf://ProCreations/auto-200m-2-int8@2501a22901e8cc520c746a86f3f9d04f7feaaefb"
 device = "cpu"
 approval_threshold = 0.98
 

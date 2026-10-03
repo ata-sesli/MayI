@@ -9,8 +9,8 @@ wheels/
 # Virtual environments
 .venv
 
-# Local model checkpoint and runtime
-Julia-1/
+# Local model checkpoints
+auto-200m-2-int8/
 
 # Local environment and deployment configuration
 .env

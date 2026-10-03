@@ -84,10 +84,10 @@ class UnixTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await other.close()
 
-    async def test_hook_end_to_end_and_failure_fallthrough(self):
+    async def test_hook_holds_without_context_and_failure_fallthrough(self):
         for command, expected in (
-            ("git status", "allow"),
-            ("sudo x", "deny"),
+            ("git status", None),
+            ("sudo x", None),
             ("unknown", None),
         ):
             event = {

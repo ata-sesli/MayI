@@ -8,7 +8,7 @@ the operation. OpenAI Codex's `PermissionRequest` hook is the first adapter.
 
 Use Python 3.14. Prefer the standard library for application logic. Granian
 serves HTTP/HTTPS, Zova stores audit records, and the separately installed
-SupersonicLabs Julia-1 package owns its ML dependencies. Keep the project small;
+Auto runtime uses CPU Torch and Transformers. Keep the project small;
 do not add a web framework, ORM, agent framework, or policy-learning mechanism
 without a concrete requirement.
 
@@ -20,16 +20,16 @@ without a concrete requirement.
 | `src/mayi/core/models.py` | Request/result dataclasses and normalization. |
 | `src/mayi/core/policy.py`, `policy.toml` | File rule validation/matching; empty default rules. |
 | `src/mayi/core/evaluator.py` | Shared authorization pipeline, timeout, audit, fallback. |
-| `src/mayi/julia/engine.py` | Public Julia runtime API, validated probabilities, serialized inference. |
-| `src/mayi/julia/prompt.py` | Authorization question and operational state encoding. |
+| `src/mayi/model/engine.py` | Public Auto runtime API, validated probabilities, serialized inference. |
+| `src/mayi/model/prompt.py` | Authorization question and operational state encoding. |
 | `src/mayi/server/` | JSON protocol, Unix socket server/client, raw ASGI application. |
 | `src/mayi/adapters/codex.py` | Hook normalization and output translation. |
 | `src/mayi/hook_client.py` | Ordered Unix/HTTP fallback and bounded HTTP worker. |
 | `src/mayi/storage/zova.py` | Zova decision/event records and log queries. |
+| `src/mayi/user_context.py` | Daemon prompt ledger, provenance, ordering and context resolution. |
 | `src/mayi/telemetry.py` | Context fingerprints, event validation, bounded routing logs. |
 | `src/mayi/config.py` | TOML loading and configuration validation. |
 | `src/mayi/cli.py`, `__main__.py` | CLI commands and daemon lifecycle. |
-| `src/mayi/evaluation.py` | Fixture evaluation and aggregate metrics. |
 | `tests/`, `tests/fixtures/` | Standard-library tests and labeled permission examples. |
 | `config.example.toml` | Local defaults and documented settings. |
 | `.dockerfile`, `.dockerignore`, `config.docker.toml` | Container packaging and defaults. |
@@ -39,9 +39,9 @@ without a concrete requirement.
 
 - All transports must call the same evaluator. Never duplicate decision logic
   in an HTTP handler or coding-agent adapter.
-- Preserve the order: normalize, deny-rule matching, known-safe allow, Julia,
+- Preserve the order: normalize, deny-rule matching, known-safe allow, Auto,
   threshold. `strict` returns DENY for deny-rule matches; `approve-or-hold`
-  returns HOLD immediately. Julia must never override either result. Policy
+  returns HOLD immediately. Auto must never override either result. Policy
   belongs to the daemon, defaults to strict, and is recorded with the matched
   rule in responses and audit records.
 - Keep command rules in the configured policy file. Ship `policy.toml` with
@@ -52,15 +52,26 @@ without a concrete requirement.
   produce implicit approval. Use HOLD for uncertainty.
 - Audit-write failure prevents approval but preserves an existing hard deny.
   Do not silently replace Zova with an unaudited or alternate storage path.
-- The initial threshold is `0.98`; do not lower it without evaluation evidence.
+- The default threshold is `0.98`, restored by explicit user request. Further
+  changes require user authorization and evaluation evidence.
+  It applies to the Auto authorization classifier. Do not retain alternative
+  model engines or risk-question implementations.
+  Preserve actual probabilities; do not invent aggregate safety confidence.
 - Keep known-safe rules narrow. A command prefix is insufficient when shell
   operators, redirection, additional tool settings, or unsafe flags are present.
   Do not build a full shell parser as an incidental change.
-- Load Julia once per daemon process using its public API. Preserve inference
+- Load Auto once per daemon process using its public API. Preserve inference
   serialization even after a waiting client times out; cancellation cannot stop
   an already running model call.
 - Codex APPROVE maps to `allow`, DENY maps to `deny`, and HOLD/errors emit `{}`
-  for native approval fallthrough. The hook must not load Julia or open Zova.
+  for native approval fallthrough. The hook must not load Auto or open Zova.
+- Codex requests require persisted UserPromptSubmit context matching session,
+  current turn, and directory. Use hook captures directly without origin proof
+  or signing keys; generated continuations may be treated as instructions.
+  Missing, stale, oversized, or ambiguously ordered context HOLD before policy
+  or model evaluation. Preserve original instructions and later corrections in
+  daemon arrival order. No transcript parsing or agent-writable context cache.
+  Capture failures block submission; recheck context before granting approval.
 - Hook endpoints are sequential availability fallback. Stop on every valid
   decision, including HOLD/DENY. Authentication, TLS, or malformed-response
   failures must not advance to another server. Keep total deadlines bounded,
@@ -103,12 +114,12 @@ the subcommand. Local defaults use `~/.mayi/mayi.sock`, disable HTTP, and store
 audit history in `~/.local/share/mayi/mayi.zova`. Keep personal configuration in
 ignored files such as `config.local.toml` or `my-config.toml`.
 
-Without Julia, configured file rules remain usable; the empty default returns HOLD.
-Use the installation procedure in README.md for `SupersonicLabs/Julia-1`
-(distribution `supersonic-julia`, import `julia`). Do not install the unrelated
-Julia-language bridge by mistake. Julia is not in MayI's lockfile; after adding
-its runtime to `.venv`, use the installed executables or `uv run --no-sync` to
-avoid removing those separately installed packages.
+Without Auto, configured file rules remain usable; the empty default returns HOLD.
+Use README.md to install the separately managed Torch/Transformers runtime.
+The pinned Auto INT8 checkpoint loader must pass SHA-256 verification before
+import. Local ML packages are outside MayI's lockfile; use installed executables
+or `uv run --no-sync` after installing them. Auto requires resolved trusted user
+context. Auto is the only supported model implementation.
 
 The Python convenience API `await mayi.authorize(request)` uses deterministic
 policy only. A configured `Evaluator` owns model/audit integration. The CLI
@@ -137,8 +148,8 @@ On SELinux hosts, add `Z` to configuration/policy bind mounts. Non-secret
 configuration must be readable by UID 10001; deployment token files stay private.
 
 All HTTP endpoints require the configured bearer token. Check `/v1/status`
-with `Authorization: Bearer <token>` and inspect `julia_available`. The image
-installs the Julia runtime from a pinned revision and automatically downloads
+with `Authorization: Bearer <token>` and inspect `model_available`. The image
+installs CPU Torch/Transformers and uses a pinned loader and automatically downloads
 its checkpoint into `/data/models` on first startup. Retain the data volume
 across replacements. A configured model must download/load before listeners
 open; failure stops startup. Local environments install the runtime separately.
@@ -155,7 +166,7 @@ because the adapter was modified.
 
 ## Verification
 
-Normal tests require no Julia checkpoint:
+Normal tests require no Auto checkpoint:
 
 ```sh
 .venv/bin/python -m unittest discover -s tests -v
@@ -167,17 +178,9 @@ behavior, then the relevant broader checks. Show progress for tests, benchmarks,
 and long commands. Do not claim a skipped real-model test verified inference.
 
 ```sh
-MAYI_TEST_MODEL=/absolute/path/to/Julia-1 \
-  .venv/bin/python -m unittest discover -s tests -p test_julia.py -v
-.venv/bin/python -m mayi.evaluation --fixtures tests/fixtures/permissions.json
 uv build
 git diff --check
 ```
-
-The fixture runner evaluates text without executing the commands, and records
-decisions in the configured audit store. Use `--config` with a temporary store
-for isolated experiments. Track false automatic approvals, not just approval
-rate. Fixture labels are conservative examples, not real human outcomes.
 
 For deployment changes, build the container and verify non-root startup,
 authentication, all three outcomes, and audit persistence across replacement.
@@ -203,7 +206,7 @@ repeat of the entire container or model suite.
   continue with available tools.
 - Use internet research for design, brainstorming, research, or comparisons;
   verify external APIs against their primary documentation.
-- Do not add dependencies to MayI for concerns owned by Julia. Keep normal tests
+- Keep core dependencies separate from the optional ML runtime. Keep normal tests
   independent of checkpoint downloads.
 - Preserve `.gitignore` coverage for environments, local configs, model weights,
   audit databases/sidecars, and generated artifacts. Keep source, tests, example

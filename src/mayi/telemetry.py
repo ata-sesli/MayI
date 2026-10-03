@@ -18,15 +18,23 @@ def fingerprint(value):
 
 
 def context(
-    policy, threshold, timeout, model_id=None, device=None, rules_fingerprint=None
+    policy,
+    threshold,
+    timeout,
+    model_id=None,
+    device=None,
+    rules_fingerprint=None,
 ):
+    from .core import evaluator
     from .core import policy as rules
+    from .model import prompt
 
     values = {
         "policy": policy,
-        "policy_version": hashlib.sha256(Path(rules.__file__).read_bytes()).hexdigest()[
-            :16
-        ],
+        "input_version": fingerprint(Path(prompt.__file__).read_text()),
+        "policy_version": hashlib.sha256(
+            Path(rules.__file__).read_bytes() + Path(evaluator.__file__).read_bytes()
+        ).hexdigest()[:16],
         "threshold": threshold,
         "request_timeout": timeout,
         "model_id": fingerprint(model_id) if model_id else None,

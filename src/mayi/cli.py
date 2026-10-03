@@ -6,11 +6,11 @@ import os
 import signal
 import sys
 
-from .adapters.codex import run_hook
+from .adapters.codex import capture_block, run_hook
 from .config import load_config
 from .core.evaluator import Evaluator
 from .core.models import AuthorizationRequest, hold
-from .julia.engine import JuliaEngine
+from .model.engine import AutoEngine
 from .server.protocol import MAX_BYTES, decode
 from .server.unix import UnixServer, query
 
@@ -37,6 +37,11 @@ def parser():
     decide.add_argument("--reason")
     hook = commands.add_parser("hook", help="Run an agent permission hook")
     hook.add_argument("agent", choices=["codex"])
+    hook.add_argument(
+        "--user-prompt",
+        action="store_true",
+        help="Fail closed if a UserPromptSubmit event cannot be persisted",
+    )
     logs = commands.add_parser("logs", help="Read audit records")
     logs.add_argument("--decision", choices=["approve", "hold", "deny"])
     logs.add_argument("--limit", type=int, default=100)
@@ -68,17 +73,19 @@ async def build_evaluator(config):
     model = None
     try:
         if config.model:
-            logger.info("julia_loading")
-            from .julia.download import resolve_model
+            logger.info("model_loading")
+            from .model.download import resolve_model
 
             model_path = await asyncio.to_thread(
                 resolve_model, config.model, config.storage_path.parent
             )
             model = await asyncio.to_thread(
-                JuliaEngine.load, model_path, device=config.device
+                AutoEngine.load,
+                model_path,
+                device=config.device,
             )
         else:
-            logger.warning("julia_not_configured ambiguous_requests_will_hold")
+            logger.warning("model_not_configured ambiguous_requests_will_hold")
     except BaseException:
         audit.close()
         raise
@@ -91,6 +98,7 @@ async def build_evaluator(config):
         policy_rules=config.policy_rules,
         model_id=config.model,
         device=config.device,
+        context_max_age=config.context_max_age,
     )
 
 
@@ -153,8 +161,14 @@ async def serve(config):
 async def execute(args, config):
     if args.command == "hook":
         try:
+            event = read_request()
+            if args.user_prompt and (
+                not isinstance(event, dict)
+                or event.get("hook_event_name") != "UserPromptSubmit"
+            ):
+                raise ValueError("Expected user prompt event")
             result = await run_hook(
-                read_request(),
+                event,
                 config.unix_socket,
                 timeout=config.hook_timeout
                 if config.hook_endpoints
@@ -165,7 +179,7 @@ async def execute(args, config):
                 telemetry_file=config.hook_telemetry_file,
             )
         except ValueError, UnicodeError, RecursionError, OSError:
-            result = {}
+            result = capture_block() if args.user_prompt else {}
         print(json.dumps(result))
     elif args.command == "feedback":
         value = {
@@ -246,7 +260,7 @@ def main(argv=None):
         return 130
     except Exception as error:  # noqa: BLE001 - final CLI failure boundary.
         if args.command == "hook":
-            print("{}")
+            print(json.dumps(capture_block()) if args.user_prompt else "{}")
             return 0
         if args.command == "decide":
             print(json.dumps(hold("Configuration or infrastructure failure").to_dict()))

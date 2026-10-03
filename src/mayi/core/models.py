@@ -14,6 +14,9 @@ class AuthorizationRequest:
     input: dict[str, object] = field(default_factory=dict)
     metadata: dict[str, object] = field(default_factory=dict)
 
+    # Set only by the daemon after normalization and ledger verification.
+    user_context: dict | None = None
+
     @classmethod
     def normalize(cls, value):
         if isinstance(value, cls):
@@ -22,6 +25,8 @@ class AuthorizationRequest:
             raise TypeError("Expected an authorization object")
         if set(value) - set(cls.__dataclass_fields__):
             raise ValueError("Unknown request fields")
+        if value.get("user_context") is not None:
+            raise ValueError("User context must be resolved by the daemon")
         for name in ("agent", "tool"):
             if not isinstance(value.get(name), str) or not value[name].strip():
                 raise ValueError(f"Missing {name}")

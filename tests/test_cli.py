@@ -61,6 +61,20 @@ class CliTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(code, 0, err)
         self.assertEqual(json.loads(out), {})
 
+    async def test_prompt_capture_cli_failure_blocks_submission(self):
+        for body in (b"{bad", b"x" * 65537, b"{}"):
+            code, out, err = await self.command(
+                "hook", "codex", "--user-prompt", input=body
+            )
+            self.assertEqual(code, 0, err)
+            self.assertEqual(json.loads(out)["decision"], "block")
+        self.config.write_text("invalid toml")
+        code, out, err = await self.command(
+            "hook", "codex", "--user-prompt", input=b"{}"
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["decision"], "block")
+
     async def test_daemon_status_hook_and_granian(self):
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))
@@ -95,9 +109,7 @@ class CliTests(unittest.IsolatedAsyncioTestCase):
             code, out, err = await self.command(
                 "hook", "codex", input=json.dumps(event).encode()
             )
-            self.assertEqual(
-                json.loads(out)["hookSpecificOutput"]["decision"]["behavior"], "allow"
-            )
+            self.assertEqual(json.loads(out), {})
 
             def post():
                 req = urllib.request.Request(

@@ -196,7 +196,7 @@ def remember_endpoint(path, fingerprint, index):
 def valid_reply(request, result):
     if not isinstance(result, dict):
         return False
-    if request.get("action") == "event":
+    if request.get("action") in {"event", "user_prompt"}:
         return type(result.get("stored")) is bool
     return result.get("decision") in {"approve", "hold", "deny"}
 
@@ -239,7 +239,7 @@ async def query_endpoints(
                     if routing is not None:
                         routing["selected_endpoint"] = index
                     # Only authorization replies update routing preference.
-                    if request.get("action") != "event":
+                    if request.get("action") not in {"event", "user_prompt"}:
                         remember_endpoint(state_file, fingerprint, index)
                     return result
             except Unavailable as error:
@@ -253,7 +253,9 @@ async def query_endpoints(
             finally:
                 attempt["duration_ms"] = milliseconds(started)
     return (
-        {"stored": False} if request.get("action") == "event" else {"decision": "hold"}
+        {"stored": False}
+        if request.get("action") in {"event", "user_prompt"}
+        else {"decision": "hold"}
     )
 
 

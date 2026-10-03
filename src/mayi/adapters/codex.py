@@ -74,6 +74,24 @@ def tool_outcome(event):
     return result
 
 
+def user_prompt(event):
+    # Use documented hook fields directly; ordering is owned by the daemon.
+    return {
+        "id": str(uuid.uuid4()),
+        "session_id": event.get("session_id"),
+        "turn_id": event.get("turn_id"),
+        "cwd": event.get("cwd"),
+        "prompt": event.get("prompt"),
+    }
+
+
+def capture_block():
+    return {
+        "decision": "block",
+        "reason": "MayI could not persist the submitted prompt.",
+    }
+
+
 async def run_hook(
     event,
     path,
@@ -93,12 +111,19 @@ async def run_hook(
         "attempts": [],
         "selected_endpoint": None,
     }
+    capture = (
+        isinstance(event, dict) and event.get("hook_event_name") == "UserPromptSubmit"
+    )
     try:
         outcome = (
             isinstance(event, dict) and event.get("hook_event_name") == "PostToolUse"
         )
-        routing["hook_event"] = "PostToolUse" if outcome else "PermissionRequest"
-        if outcome:
+        routing["hook_event"] = (
+            event.get("hook_event_name") if isinstance(event, dict) else None
+        )
+        if capture:
+            request = {"action": "user_prompt", "prompt": user_prompt(event)}
+        elif outcome:
             request = {"action": "event", "event": tool_outcome(event)}
             routing["event_id"] = request["event"]["id"]
         else:
@@ -119,13 +144,17 @@ async def run_hook(
         else:
             result = await query(path, request, timeout=timeout)
             routing["selected_endpoint"] = 0
-        routing["result"] = result.get("stored") if outcome else result.get("decision")
+        routing["result"] = (
+            result.get("stored") if outcome or capture else result.get("decision")
+        )
         if result.get("request_id"):
             routing["server_request_id"] = result["request_id"]
+        if capture:
+            return {} if result.get("stored") is True else capture_block()
         return {} if outcome else translate(result)
-    except Exception:  # noqa: BLE001 - every hook failure must fall through.
+    except Exception:  # noqa: BLE001 - capture blocks; permission failures fall through.
         routing["result"] = "error"
-        return {}
+        return capture_block() if capture else {}
     finally:
         routing["total_ms"] = milliseconds(started)
         append_routing(telemetry_file, routing)

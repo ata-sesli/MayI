@@ -4,13 +4,18 @@ mode = "strict"
 # Relative to this configuration file. Shipped with no allow/deny rules.
 file = "policy.toml"
 
-[julia]
-# Install SupersonicLabs/Julia-1's Python package and download its checkpoint.
-# model = "/absolute/path/to/Julia-1"
+[model]
+# Install the Auto runtime (see README) and use the pinned checkpoint.
+# model = "/absolute/path/to/auto-200m-2-int8"
 # Or download this pinned checkpoint automatically beside the audit database:
-# model = "hf://SupersonicLabs/Julia-1@a85b127321d580d65176c89ced8273f305745d85"
+# model = "hf://ProCreations/auto-200m-2-int8@2501a22901e8cc520c746a86f3f9d04f7feaaefb"
 device = "cpu"
+# Minimum Auto approval probability.
 approval_threshold = 0.98
+
+[user_context]
+# Codex context must match the current session, turn and directory.
+max_age = 3600
 
 [server]
 unix_socket = "~/.mayi/mayi.sock"

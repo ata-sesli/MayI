@@ -71,6 +71,7 @@ class Config:
     model: str | None = None
     device: str = "cpu"
     approval_threshold: float = 0.98
+    context_max_age: float = 3600.0
     unix_socket: Path = Path("~/.mayi/mayi.sock")
     request_timeout: float = 10.0
     http_enabled: bool = False
@@ -106,10 +107,13 @@ def load_config(path=None):
     )
     fields = {
         "policy": {"mode": "policy_mode", "file": "policy_file"},
-        "julia": {
+        "model": {
             "model": "model",
             "device": "device",
             "approval_threshold": "approval_threshold",
+        },
+        "user_context": {
+            "max_age": "context_max_age",
         },
         "server": {"unix_socket": "unix_socket", "request_timeout": "request_timeout"},
         "http": {
@@ -144,6 +148,7 @@ def load_config(path=None):
         if type(getattr(config, key)) is not bool:
             raise ValueError(f"{key} must be boolean")
     for key in (
+        "context_max_age",
         "approval_threshold",
         "request_timeout",
         "hook_timeout",
@@ -154,6 +159,8 @@ def load_config(path=None):
             raise ValueError(f"Invalid {key}")
     if not 0 <= config.approval_threshold <= 1 or config.request_timeout <= 0:
         raise ValueError("Invalid threshold or request timeout")
+    if not 0 < config.context_max_age <= 86400:
+        raise ValueError("Invalid user context age")
     if config.hook_timeout <= 0 or config.hook_connect_timeout <= 0:
         raise ValueError("Invalid hook timeout")
     if "hook" in raw and "endpoints" in raw["hook"]:

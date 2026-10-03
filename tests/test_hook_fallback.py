@@ -127,6 +127,39 @@ class FallbackTests(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(len(self.calls), 1)
 
+    async def test_prompt_persistence_reply_stops_fallback_without_changing_preference(
+        self,
+    ):
+        event = {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "session",
+            "turn_id": "turn",
+            "cwd": "/work",
+            "prompt": "Do not execute anything.",
+        }
+        for stored in (True, False):
+            self.calls.clear()
+            first = await self.endpoint(raw=json.dumps({"stored": stored}).encode())
+            second = await self.endpoint(raw=b'{"stored":true}')
+            config = self.config([{"url": first}, {"url": second}])
+            response = await run_hook(
+                event,
+                self.root / "missing.sock",
+                endpoints=config.hook_endpoints,
+                state_file=config.hook_state_file,
+            )
+            self.assertEqual(
+                response,
+                {}
+                if stored
+                else {
+                    "decision": "block",
+                    "reason": "MayI could not persist the submitted prompt.",
+                },
+            )
+            self.assertEqual(len(self.calls), 1)
+            self.assertFalse(config.hook_state_file.exists())
+
     async def test_live_unix_decision_does_not_contact_http(self):
         path = self.root / "live.sock"
         server = UnixServer(Evaluator(policy_rules=RULES), path)
@@ -135,8 +168,8 @@ class FallbackTests(unittest.IsolatedAsyncioTestCase):
             url = await self.endpoint()
             config = self.config([{"unix_socket": str(path)}, {"url": url}])
             for command, expected in (
-                ("git status", "allow"),
-                ("sudo x", "deny"),
+                ("git status", None),
+                ("sudo x", None),
                 ("unknown", None),
             ):
                 event = {**EVENT, "tool_input": {"command": command}}

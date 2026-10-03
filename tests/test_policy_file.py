@@ -10,7 +10,7 @@ from mayi.cli import build_evaluator
 from mayi.config import Config, load_config
 from mayi.core.evaluator import Evaluator
 from mayi.core.policy import PolicyRules
-from mayi.julia.download import resolve_model
+from mayi.model.download import resolve_model
 
 
 class PolicyFileTests(unittest.IsolatedAsyncioTestCase):
@@ -26,7 +26,7 @@ class PolicyFileTests(unittest.IsolatedAsyncioTestCase):
         config = Config(model="/missing/checkpoint")
         with (
             patch("mayi.storage.zova.AuditStore", return_value=audit),
-            patch("mayi.cli.JuliaEngine.load", side_effect=RuntimeError("failed")),
+            patch("mayi.cli.AutoEngine.load", side_effect=RuntimeError("failed")),
             self.assertRaises(RuntimeError),
         ):
             await build_evaluator(config)
@@ -40,7 +40,7 @@ class PolicyFileTests(unittest.IsolatedAsyncioTestCase):
         ):
             self.assertEqual(
                 resolve_model(
-                    "hf://SupersonicLabs/Julia-1@a85b127321d580d65176c89ced8273f305745d85",
+                    "hf://ProCreations/auto-200m-2-int8@2501a22901e8cc520c746a86f3f9d04f7feaaefb",
                     Path("/data"),
                 ),
                 "/cached/snapshot",
@@ -48,7 +48,7 @@ class PolicyFileTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(download.call_count, 1)
         self.assertTrue(download.call_args.kwargs["local_files_only"])
         with self.assertRaises(ValueError):
-            resolve_model("hf://SupersonicLabs/Julia-1@main", Path("/data"))
+            resolve_model("hf://ProCreations/auto-200m-2-int8@main", Path("/data"))
 
     async def test_empty_policy_has_no_static_decisions(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -126,7 +126,7 @@ pattern = "(?:^|\\\\s)sudo(?:\\\\s|$)"
                 {"huggingface_hub": SimpleNamespace(snapshot_download=download)},
             ):
                 path = resolve_model(
-                    "hf://SupersonicLabs/Julia-1@a85b127321d580d65176c89ced8273f305745d85",
+                    "hf://ProCreations/auto-200m-2-int8@2501a22901e8cc520c746a86f3f9d04f7feaaefb",
                     Path(directory),
                 )
             self.assertEqual(path, "/data/snapshot")

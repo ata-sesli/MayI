@@ -25,8 +25,8 @@ class StorageTests(unittest.IsolatedAsyncioTestCase):
             try:
                 rows = store.logs()
                 self.assertEqual(len(rows), 3)
-                semantic = next(row for row in rows if row["source"] == "julia")
-                self.assertEqual(semantic["julia_approve_probability"], 0.99)
+                semantic = next(row for row in rows if row["source"] == "model")
+                self.assertEqual(semantic["model_approve_probability"], 0.99)
                 self.assertEqual(semantic["operation"], "git commit -m 'quoted'")
                 self.assertIsNone(semantic["human_decision"])
                 self.assertNotIn("input", semantic)
@@ -85,8 +85,8 @@ class ConfigTests(unittest.TestCase):
 
     def test_invalid_config_rejected(self):
         for text in (
-            "[julia]\napproval_threshold=nan",
-            "[julia]\napproval_threshold=2",
+            "[model]\napproval_threshold=nan",
+            "[model]\napproval_threshold=2",
             '[http]\nenabled="yes"',
             "[http]\nport=0",
             '[http]\nssl_cert="cert.pem"',
