@@ -111,6 +111,14 @@ class CliTests(unittest.IsolatedAsyncioTestCase):
             code, out, err = await self.command("status")
             self.assertEqual(code, 0, err)
             self.assertEqual(json.loads(out)["status"], "ready")
+            # Setup probes status and writes only the explicitly selected temp file.
+            target = self.directory / "hooks.json"
+            code, out, err = await self.command("setup", "codex", "--target", str(target))
+            self.assertEqual(code, 0, err)
+            setup = json.loads(out)
+            self.assertEqual(setup["daemon"], "ready")
+            self.assertFalse(setup["model_available"])
+            self.assertTrue(target.exists())
             event = {
                 "hook_event_name": "PermissionRequest",
                 "tool_name": "Bash",
@@ -144,6 +152,24 @@ class CliTests(unittest.IsolatedAsyncioTestCase):
                         raise
                     await asyncio.sleep(0.05)
             self.assertEqual(result["decision"], "deny")
+            # Check the authenticated GET /v1/status path through the same worker.
+            token = self.directory / "token"
+            token.write_text("test-token")
+            token.chmod(0o600)
+            client_config = self.directory / "client.toml"
+            client_config.write_text(
+                f'[hook]\ntimeout=5.0\n[[hook.endpoints]]\n'
+                f'url="http://127.0.0.1:{port}/v1/decide"\n'
+                f'token_file="{token}"\n'
+            )
+            original_config = self.config
+            self.config = client_config
+            try:
+                code, out, err = await self.command("setup", "claude", "--target", str(self.directory / "claude.json"))
+                self.assertEqual(code, 0, err)
+                self.assertEqual(json.loads(out)["daemon"], "ready")
+            finally:
+                self.config = original_config
         finally:
             if process.returncode is None:
                 process.send_signal(signal.SIGTERM)

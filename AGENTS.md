@@ -31,6 +31,7 @@ without a concrete requirement.
 | `src/mayi/telemetry.py` | Context fingerprints, event validation, bounded routing logs. |
 | `src/mayi/config.py` | TOML loading and configuration validation. |
 | `src/mayi/cli.py`, `__main__.py` | CLI commands and daemon lifecycle. |
+| `src/mayi/setup.py` | Agent configuration merging, private backups, plugin dependency installation and status checks. |
 | `tests/`, `tests/fixtures/` | Standard-library tests and labeled permission examples. |
 | `config.example.toml` | Local defaults and documented settings. |
 | `.dockerfile`, `.dockerignore`, `config.docker.toml` | Container packaging and defaults. |
@@ -177,6 +178,14 @@ published port and named volume are on the remote host.
 For Codex, follow the complete `hooks.json` example in README.md and explicitly
 review/trust the hook. Do not change or trust a user's hook configuration just
 because the adapter was modified.
+
+`mayi setup codex|claude|opencode` explicitly configures the selected agent.
+Default to global settings; `--target` selects another configuration file.
+Preserve unrelated settings, OpenCode JSONC comments and other handlers, back up
+changed files privately and keep repeat runs free of duplicate entries. Setup
+never starts a daemon, relaxes permissions or grants hook trust. Its status probe
+must not submit an authorization request or change the sticky routing preference.
+OpenCode setup currently requires the source checkout and Bun.
 
 ## Verification
 

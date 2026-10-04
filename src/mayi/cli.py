@@ -25,6 +25,9 @@ def parser():
     commands = root.add_subparsers(dest="command", required=True)
     commands.add_parser("serve", help="Start the resident authorization daemon")
     commands.add_parser("status", help="Query the running daemon")
+    setup = commands.add_parser("setup", help="Configure an agent to use MayI")
+    setup.add_argument("agent", choices=["codex", "claude", "opencode"])
+    setup.add_argument("--target", help="Agent configuration file (default: global settings)")
     decide = commands.add_parser(
         "decide", help="Evaluate locally using the configured model and audit store"
     )
@@ -159,7 +162,12 @@ async def serve(config):
 
 
 async def execute(args, config):
-    if args.command == "hook":
+    if args.command == "setup":
+        from .setup import setup_agent
+
+        print(json.dumps(await setup_agent(args.agent, config, config_path=args.config,
+                                          target=args.target)))
+    elif args.command == "hook":
         adapter = get_adapter(args.agent)
         try:
             event = read_request()
@@ -263,6 +271,10 @@ def main(argv=None):
     except KeyboardInterrupt:
         return 130
     except Exception as error:  # noqa: BLE001 - final CLI failure boundary.
+        if args.command == "setup":
+            # Setup failures need actionable installation/configuration feedback.
+            logger.error("setup_failed %s", error)
+            return 1
         if args.command == "hook":
             adapter = get_adapter(args.agent)
             result = (

@@ -65,9 +65,13 @@ def http_worker():
             connection.connect()
             connect_ms = milliseconds(started)
             connection.sock.settimeout(endpoint["timeout"])
-            connection.request(
-                "POST", url.path or "/", body=encode(task["request"]), headers=headers
-            )
+            if task["request"] == {"action": "status"}:
+                connection.request("GET", (url.path or "").rsplit("/", 1)[0] + "/status",
+                                   headers=headers)
+            else:
+                connection.request(
+                    "POST", url.path or "/", body=encode(task["request"]), headers=headers
+                )
             response = connection.getresponse()
             if response.status in {404, 502, 503, 504}:
                 sys.stdout.buffer.write(encode({"reason": f"http_{response.status}"}))
@@ -196,6 +200,8 @@ def remember_endpoint(path, fingerprint, index):
 def valid_reply(request, result):
     if not isinstance(result, dict):
         return False
+    if request == {"action": "status"}:
+        return result.get("status") == "ready" and type(result.get("model_available")) is bool
     if request.get("action") in {"event", "user_prompt"}:
         return type(result.get("stored")) is bool
     return result.get("decision") in {"approve", "hold", "deny"}
@@ -239,7 +245,7 @@ async def query_endpoints(
                     if routing is not None:
                         routing["selected_endpoint"] = index
                     # Only authorization replies update routing preference.
-                    if request.get("action") not in {"event", "user_prompt"}:
+                    if request.get("action") not in {"event", "user_prompt", "status"}:
                         remember_endpoint(state_file, fingerprint, index)
                     return result
             except Unavailable as error:

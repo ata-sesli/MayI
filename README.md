@@ -155,8 +155,36 @@ url = "http://127.0.0.1:7411/v1/decide"
 token_file = "~/.config/mayi/server.token"
 ```
 
-Use this file for both prompt capture and permission evaluation. In the Codex
-and Claude hook commands below, add
+Use this file when connecting any supported agent:
+
+```sh
+.venv/bin/mayi --config ~/.config/mayi/hook.toml setup codex
+.venv/bin/mayi --config ~/.config/mayi/hook.toml setup claude
+.venv/bin/mayi --config ~/.config/mayi/hook.toml setup opencode
+```
+
+Run only the commands for agents you use. Setup detects the executable and config
+paths and registers prompt capture and permission handling in global agent
+settings. OpenCode setup requires Bun and this source checkout; it installs the
+plugin's locked dependencies automatically. It does not install a coding agent.
+
+Setup preserves existing settings and other hooks/plugins, saves a private backup
+beside each modified configuration, and avoids duplicates on repeated runs.
+OpenCode JSONC comments are preserved. The result reports the configuration and
+backup paths, whether anything changed, daemon connectivity and model availability
+when reachable. An offline daemon does not prevent configuration. No daemon is
+started and no hook is automatically trusted.
+
+To configure a project instead of global settings, supply its config file:
+
+```sh
+.venv/bin/mayi --config ~/.config/mayi/hook.toml setup opencode --target ./opencode.jsonc
+```
+
+Without `--config`, setup uses MayI's default configuration and Unix socket.
+After setup, review/trust Codex's hooks through `/hooks`, or restart Claude Code
+or OpenCode to load the configuration. Manual setup remains documented below.
+In the Codex and Claude hook commands, add
 `--config /absolute/path/to/hook.toml` before `hook`. For OpenCode, set
 `mayiConfig` to that file's absolute path. A 15-second outer hook timeout covers
 this 10-second client deadline.
@@ -169,7 +197,8 @@ token to the agent machine's private token file. See
 ## Connect Codex
 
 Install the CLI on the machine running Codex and start MayI locally or remotely.
-Merge these entries into `~/.codex/hooks.json`, replacing the executable paths:
+Run `mayi setup codex` (with your configuration as shown above). For manual setup,
+merge these entries into `~/.codex/hooks.json`, replacing the executable paths:
 
 ```json
 {
@@ -244,7 +273,8 @@ the hook uses the configured `server.unix_socket`.
 
 ## Connect Claude Code
 
-Merge these entries into `~/.claude/settings.json` or the project's
+Run `mayi setup claude` to configure global settings. For manual setup,
+merge these entries into `~/.claude/settings.json` or the project's
 `.claude/settings.json`. Replace the executable paths and use the same MayI
 configuration for both hooks:
 
@@ -291,7 +321,9 @@ structured metrics are retained; textual outputs and errors are omitted.
 
 ## Connect OpenCode V2
 
-Install the local plugin's dependencies from the MayI checkout:
+Run `mayi setup opencode` from this installation to install dependencies and
+register the plugin. Bun must be available. For manual setup, install the local
+plugin's dependencies from the MayI checkout:
 
 ```sh
 bun install --cwd plugins/opencode --frozen-lockfile
@@ -465,6 +497,7 @@ Auto will HOLD it. Use an agent adapter with prompt capture for context-aware de
 | --- | --- |
 | `mayi serve` | Start the daemon and load its configured model once. |
 | `mayi status` | Query the daemon over its Unix socket. |
+| `mayi setup codex` / `mayi setup claude` / `mayi setup opencode` | Register the agent integration; use `--target FILE` for project settings. |
 | `mayi decide --command "git status"` | Evaluate locally and record a decision. |
 | `mayi decide --stdin` | Evaluate a normalized JSON request from stdin. |
 | `mayi hook codex --user-prompt` | Persist a submitted prompt; block on failure. |
